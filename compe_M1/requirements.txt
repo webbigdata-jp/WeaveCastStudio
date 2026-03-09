@@ -1,0 +1,8 @@
+google-genai>=1.0.0           # Gemini API (GenAI SDK)
+google-api-python-client>=2.0 # YouTube Data API
+google-auth-oauthlib>=1.0     # OAuth2
+pydub>=0.25.1                 # Audio manipulation
+Pillow>=10.0                  # Image processing
+python-dotenv>=1.0            # 環境変数管理
+pyyaml>=6.0                   # YAML設定ファイル
+nodriver>=0.37                # ブラウザ自動化（Chromeが必要）

@@ -1,0 +1,20 @@
+# M3 依存パッケージ
+# M1の requirements.txt に追記するか、pip install -r requirements_m3.txt で追加インストール
+
+# ブラウザ自動化（DrissionPage = Chromium自動操作 + Requests統合）
+DrissionPage>=4.1.0
+
+# HTML解析（BeautifulSoupはリンク抽出に使用。DrissionPageのpage.eleでも可能だが
+# TOPページのHTML文字列を一括解析する用途でBeautifulSoupを利用）
+beautifulsoup4>=4.12
+lxml>=5.0
+
+# 定期巡回スケジューラ（v3系を使用。v4はまだalpha）
+# DrissionPageは同期APIのためBackgroundScheduler + ThreadPoolExecutorで並列化
+APScheduler>=3.10,<4.0
+
+# YAML設定読み込み（M1で既にインストール済みの場合は不要）
+pyyaml>=6.0
+
+# 画像処理（AI生成画像の保存に使用）
+pillow>=10.0

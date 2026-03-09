@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.log
+*.wav
+*.png
+memo.txt
+work
+*.wav
+*.jpg
+*.jpeg
+*.mp4
+*.mp3

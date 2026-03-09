@@ -1,0 +1,119 @@
+sources:
+
+  # === Tier 1: 公式政府・国際機関 (credibility: 5/5) ===
+  - id: us_war_dept
+    name: "U.S. Department of Defense"
+    url: "https://www.defense.gov/News/"
+    tier: 1
+    credibility: 5
+    type: government
+    country: US
+    crawl_interval_min: 15
+    selectors:
+      news_links: "a[href*='/News/News-Releases/'], a[href*='/News/Transcripts/'], a[href*='/News/Speeches/']"
+    notes: "defense.gov（war.govはまだ存在しないため代替）"
+
+  - id: centcom
+    name: "U.S. Central Command"
+    url: "https://www.centcom.mil/MEDIA/NEWS-ARTICLES/"
+    tier: 1
+    credibility: 5
+    type: military
+    country: US
+    crawl_interval_min: 10
+    selectors:
+      news_links: "a[href*='/MEDIA/NEWS-ARTICLES/Article/']"
+
+  - id: un_news
+    name: "UN News"
+    url: "https://news.un.org/en/"
+    tier: 1
+    credibility: 5
+    type: international_org
+    country: INTL
+    crawl_interval_min: 15
+    selectors:
+      news_links: "a[href*='/story/']"
+
+  - id: unhcr_data
+    name: "UNHCR Situations"
+    url: "https://www.unhcr.org/emergencies"
+    tier: 1
+    credibility: 5
+    type: international_org
+    country: INTL
+    crawl_interval_min: 60
+    selectors:
+      news_links: "a[href*='/emergencies/'], a[href*='/situations/']"
+    notes: "難民データ。更新頻度低いため巡回間隔長め"
+
+  # === Tier 2: 高信頼メディア・通信社 (credibility: 4/5) ===
+  - id: reuters_mideast
+    name: "Reuters Middle East"
+    url: "https://www.reuters.com/world/middle-east/"
+    tier: 2
+    credibility: 4
+    type: wire_service
+    country: INTL
+    crawl_interval_min: 5
+    selectors:
+      news_links: "a[href*='/world/middle-east/']"
+
+  - id: ap_news
+    name: "Associated Press"
+    url: "https://apnews.com/hub/iran"
+    tier: 2
+    credibility: 4
+    type: wire_service
+    country: INTL
+    crawl_interval_min: 5
+    selectors:
+      news_links: "a[href*='/article/']"
+
+  - id: aljazeera_liveblog
+    name: "Al Jazeera Live Blog"
+    url: "https://www.aljazeera.com/news/liveblog/"
+    tier: 2
+    credibility: 4
+    type: news_liveblog
+    country: INTL
+    crawl_interval_min: 5
+    selectors:
+      news_links: "a[href*='/news/liveblog/']"
+    notes: "最も更新頻度が高い英語ライブブログ"
+
+  # === Tier 3: 専門分析機関・OSINT (credibility: 3-4/5) ===
+  - id: critical_threats
+    name: "Critical Threats / ISW"
+    url: "https://www.criticalthreats.org/analysis"
+    tier: 3
+    credibility: 4
+    type: think_tank
+    country: US
+    crawl_interval_min: 30
+    selectors:
+      news_links: "a[href*='/analysis/']"
+    notes: "最も分析が厳密。日次レポートを公開"
+
+  - id: understanding_war
+    name: "Understanding War (ISW)"
+    url: "https://understandingwar.org/backgrounders"
+    tier: 3
+    credibility: 4
+    type: research
+    country: INTL
+    crawl_interval_min: 60
+    selectors:
+      news_links: "a[href*='/backgrounders/']"
+
+  - id: liveuamap_iran
+    name: "LiveUAMap Iran"
+    url: "https://iran.liveuamap.com"
+    tier: 3
+    credibility: 3
+    type: osint_dashboard
+    country: INTL
+    crawl_interval_min: 10
+    selectors:
+      news_links: null
+    notes: "地図ベースOSINT。TOPページキャプチャのみ"

@@ -1,0 +1,221 @@
+{
+  "topic": "Iran Conflict 2026",
+  "generated_at": "2026-03-05T10:36:23.605087+00:00",
+  "briefing_sections": [
+    {
+      "country": "United States",
+      "position": "The US aims to dismantle Iran's missile and naval capabilities to ensure global security and prevent nuclear weapon development.",
+      "key_quotes": [
+        "The primary objective of the U.S. operation is to eliminate the threat posed by Iran's short-range ballistic missiles and its navy.",
+        "A central objective is to ensure Iran never threatens the world with a nuclear weapon, and preventing Tehran from acquiring nuclear weapons is a matter of global security."
+      ],
+      "stance": "supportive",
+      "source_url": "https://www.state.gov/remarks-of-secretary-of-state-marco-rubio-at-the-united-nations-security-council-press-briefing/",
+      "source_date": "2026-02-28",
+      "speaker": "Mike Waltz, U.S. Ambassador to the United Nations",
+      "credibility_score": 5
+    },
+    {
+      "country": "United States",
+      "position": "US action is a preemptive measure against an imminent threat of Iranian retaliation against Israel and its allies.",
+      "key_quotes": [
+        "The U.S. aims to destroy Iran's capability to manufacture and launch ballistic missiles, as well as its naval assets that threaten global shipping.",
+        "Secretary Rubio asserted that there was an \"imminent threat\" because Iran would retaliate against the U.S. if attacked by Israel, and preemptive action was necessary to prevent higher casualties."
+      ],
+      "stance": "supportive",
+      "source_url": "https://www.state.gov/press-briefings/secretary-of-state-marco-rubio-remarks-to-press/",
+      "source_date": "2026-03-03",
+      "speaker": "Marco Rubio, Secretary of State",
+      "credibility_score": 5
+    },
+    {
+      "country": "United States",
+      "position": "US policy reaffirms national emergency with Iran, using tariffs to protect national security and economy from Iran's actions.",
+      "key_quotes": [
+        "An Executive Order was signed, reaffirming the national emergency with respect to Iran and establishing a process to impose tariffs on countries acquiring goods or services from Iran.",
+        "The regime's actions are described as a continuing threat to the United States, requiring an intensified response to protect American citizens, allies, and interests."
+      ],
+      "stance": "supportive",
+      "source_url": "https://www.whitehouse.gov/briefing-room/statements-releases/2026/02/06/fact-sheet-president-donald-j-trump-addresses-threats-to-the-united-states-by-the-government-of-iran/",
+      "source_date": "2026-02-06",
+      "speaker": "President Donald J. Trump",
+      "credibility_score": 5
+    },
+    {
+      "country": "Iran",
+      "position": "Iran views US actions as psychological warfare and rejects negotiation under pressure, emphasizing its right to self-defense.",
+      "key_quotes": [
+        "Stated that the only language for talking with the U.S. is the language of defense, not negotiation.",
+        "Emphasis that Iran will not engage under pressure, viewing U.S. actions as psychological warfare."
+      ],
+      "stance": "opposed",
+      "source_url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHxUEt7OlU1Yl-fW662MsB7P7WZIZy9fnBDCGYpLOedeSAfjkR7ht0kd94E1kedCVsvPinLAM8HVybsPZ0MYnStUA3bhNfOWiES0L-Zg7kCd7H9uFyg-x94T3at7ikSo-74IApfpzZmaoGONzblyP97BtfDzJxVT7R1vUaB_x_copjaBxsHQP3j3uairmhBRab4DmsgAuacCRFVBaJe4udVzNLeDusJeERHQhWCuIXtFQNsweaa8dPIgyTckw==",
+      "source_date": "2026-03-03",
+      "speaker": "Iran's Ambassador to the UN in Geneva",
+      "credibility_score": 5
+    },
+    {
+      "country": "Iran",
+      "position": "Iran condemns US-Israel attacks as a UN charter breach and will target US bases and Israel in response.",
+      "key_quotes": [
+        "Condemned U.S.-Israel attacks as a breach of the UN charter and stated Iran would exercise its right to self-defense.",
+        "Indicated that Israel and U.S. bases across the region would be targeted in response."
+      ],
+      "stance": "opposed",
+      "source_url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEFBHmb40LozudKNHxWFwPZ6L0p1BbiUuqomLMw-4BwWRKwHIzviKyLQTvN7AIeOY2wpN7ZpkGyEdEPdx19uyUqz2fbRW6nU_xljNy7Tsc2dcDff-_CWG1IbqkTZ-cx0_n6BCX5Lb3an5FUXCPiMS3rEnbyCg2F07N-yzKhLQ==",
+      "source_date": "2026-03-02",
+      "speaker": "Iran's Foreign Minister, Abbas Aragchi",
+      "credibility_score": 5
+    },
+    {
+      "country": "Iran",
+      "position": "Iran accuses US and Israel of unprovoked aggression and war crimes, asserting its right to self-defense under UN Charter.",
+      "key_quotes": [
+        "Stated that the U.S. and Israel launched \"unprovoked and premeditated aggression\" against Iran, calling it a \"war crime and a crime against humanity.\"",
+        "Accused the U.S. and Israel of deliberately attacking civilian populated areas and asserted that Iran is exercising its right to self-defense under Article 51 of the UN Charter."
+      ],
+      "stance": "opposed",
+      "source_url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHPUMKNeAseyY7rcsDaNnbZxd3DXucUOvUK38nEBREqFmx2yFiyO5pvscRELp2Su5f1jyXbMJ3mPnRhwY2kf0xO0Hm004kZ5DSAn13Ycfs-euoyQPLYbN9gpxIpIVTrogbdGemtSxJX",
+      "source_date": "2026-02-28",
+      "speaker": "Iran's Ambassador Amir Saeid Iravani to the UN",
+      "credibility_score": 5
+    },
+    {
+      "country": "Iran",
+      "position": "Iran confirms territorial integrity violation and asserts right to self-defense against armed attacks, demanding UN action.",
+      "key_quotes": [
+        "Declared that Iran's \"territorial integrity\" and \"national sovereignty\" were clearly violated, confirming that defense infrastructure and military facilities were targeted.",
+        "Stated that Iran would exercise its right to legitimate self-defense under Article 51 of the UN Charter, as the attacks constitute an armed attack against Iran."
+      ],
+      "stance": "opposed",
+      "source_url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHPnRL4Hp4INrmtrLrayA5DHPWSXofXqwr75QG_YFh7YIF6jLfTiClWIWaccsUf7gP4TjKo2hRJ1ZO_tWj7pJM3d0aqOXpCp0B3fc8TwqKASSLUNuwp0fJEKbc__yatWR9D8OhGeTaZYptA",
+      "source_date": "2026-02-28",
+      "speaker": "Iran's Ministry of Foreign Affairs (signed by Foreign Minister Abbas Araghchi)",
+      "credibility_score": 5
+    },
+    {
+      "country": "Iran",
+      "position": "Iran reiterates its right to defend itself with all might, considering any logistical support location a legitimate target.",
+      "key_quotes": [
+        "Stressed that Iran has \"every right in accordance with international law, with the UN Charter, to defend ourselves with all might.\"",
+        "Defended Iran's retaliatory attacks as legitimate defensive actions, stating that any location providing logistical support to the aggressor is a legitimate target."
+      ],
+      "stance": "opposed",
+      "source_url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG-F91pK2je2-hhTZ2laGVHtkfOogM3aZORW25Mq4CERIHdl4ZUyOZ2imkZS2OB12jX-4ymSAGO0b_PoK5Yd5uPEnvd7tX5oTRTHNUlcCgu5ayHsrfyXAAJfAvFRjqjAJZ-D_zv4zLU3Vas4THkA8MqDBXMDkPSTp_ZUQ==",
+      "source_date": "2026-02-28",
+      "speaker": "Esmaeil Baghaei, Spokesman for Iran's Ministry of Foreign Affairs",
+      "credibility_score": 5
+    },
+    {
+      "country": "Iran",
+      "position": "Iran states a nuclear agreement was close and reaffirms its stance against developing nuclear weapons.",
+      "key_quotes": [
+        "Stated that a \"historic opportunity\" to reach a nuclear agreement with the United States was \"within reach\" to avert military conflict.",
+        "Reiterated Iran's position against developing nuclear weapons and defended its right to peaceful nuclear technology."
+      ],
+      "stance": "neutral",
+      "source_url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGRo4e4kftlg1coD1gQtELe8j6T7DsYr1zKVCPsFB9Lbuo1wpTp8Bfwu69eiuMKCqR885HYkQA87fTjZd-hj1O-qHQRCgyL5-kH_2LAxHzQtaJh4Cud-5oxE1ApPW9CbB1c4ez8EMVHa5lurCWxF5MjnJqkNsi4eAqSLKlk_9V1WA6pr5FCA5W2qCQInxBHrr2IFkG0Uvgeq3knAw5nyKDxwHyPX-foow==",
+      "source_date": "2025-01-28",
+      "speaker": "Abbas Araghchi, Iranian Foreign Minister",
+      "credibility_score": 5
+    },
+    {
+      "country": "Iran",
+      "position": "Iran warns that US threats will cause instability and regional insecurity, cautioning neighbors against allowing hostile actions.",
+      "key_quotes": [
+        "Warned that U.S. \"threats\" against Iran would only cause instability and disrupt regional security.",
+        "Stated that neighboring countries allowing their soil, sky, or waters to be used against Iran would be considered hostile."
+      ],
+      "stance": "opposed",
+      "source_url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG-F91pK2je2-hhTZ2laGVHtkfOogM3aZORW25Mq4CERIHdl4ZUyOZ2imkZS2OB12jX-4ymSAGO0b_PoK5Yd5uPEnvd7tX5oTRTHNUlcCgu5ayHsrfyXAAJfAvFRjqjAJZ-D_zv4zLU3Vas4THkA8MqDBXMDkPSTp_ZUQ==",
+      "source_date": "2026-01-28",
+      "speaker": "Masoud Pezeshkian, Iranian President",
+      "credibility_score": 5
+    },
+    {
+      "country": "Japan",
+      "position": "Japan urges diplomatic solutions, prepares for national evacuation, and reiterates opposition to Iran's nuclear weapons program.",
+      "key_quotes": [
+        "Prime Minister Takaichi urged Iran to seek a \"diplomatic solution\" to resolve the conflict and stated that Japan would coordinate with the international community to de-escalate the situation.",
+        "Japan reiterated its stance that Iran's development of nuclear weapons is unacceptable and emphasized the importance of maintaining the international nuclear non-proliferation regime."
+      ],
+      "stance": "cautious",
+      "source_url": "https://www.mofa.go.jp/p_mo/cps/page22_000798.html",
+      "source_date": "2026-03-01",
+      "speaker": "Sanae Takaichi, Prime Minister",
+      "credibility_score": 5
+    },
+    {
+      "country": "Germany",
+      "position": "Germany supports US/Israeli strikes against Iran's nuclear program and destabilizing actions, believing the regime's end is near.",
+      "key_quotes": [
+        "Chancellor Friedrich Merz expressed support for US and Israeli attacks on Iran, while acknowledging concerns about their legitimacy and the uncertainty of future developments.",
+        "Merz stated that the German government shares the relief of many Iranians that the current regime is coming to an end and that Germany shares the interest of the US and Israel in ending Iran's \"terror\" and its nuclear and ballistic weapons program."
+      ],
+      "stance": "supportive",
+      "source_url": "null",
+      "source_date": "2026-03-01",
+      "speaker": "Friedrich Merz, German Chancellor",
+      "credibility_score": 5
+    },
+    {
+      "country": "Germany",
+      "position": "Germany will not participate offensively in the US-Israeli campaign against Iran due to lack of resources and intention.",
+      "key_quotes": [
+        "German Foreign Minister Johann Wadephul clarified Germany's stance, stating that Berlin would not participate offensively in the US-Israeli campaign against Iran.",
+        "He explained that Germany lacks the necessary military resources and has no intention of participating in any way."
+      ],
+      "stance": "neutral",
+      "source_url": "null",
+      "source_date": "2026-03-02",
+      "speaker": "Johann Wadephul, German Foreign Minister",
+      "credibility_score": 5
+    },
+    {
+      "country": "France",
+      "position": "France, Germany, and UK urge Iran to seek a negotiated solution and condemn its retaliatory attacks.",
+      "key_quotes": [
+        "A joint statement from the leaders of France, Germany, and the United Kingdom urged Iran to seek a \"negotiated solution\" and condemned Tehran's retaliatory attacks.",
+        "Clarified that these European nations did not participate in the US-Israeli strikes."
+      ],
+      "stance": "neutral",
+      "source_url": "null",
+      "source_date": "2026-02-28",
+      "speaker": "Emmanuel Macron, French President (alongside German Chancellor and British PM)",
+      "credibility_score": 5
+    },
+    {
+      "country": "United Kingdom",
+      "position": "The UK urges Iran to seek a negotiated solution and condemns its retaliatory attacks, clarifying no participation in US-Israeli strikes.",
+      "key_quotes": [
+        "A joint statement from the leaders of France, Germany, and the United Kingdom urged Iran to seek a \"negotiated solution\" and condemned Tehran's retaliatory attacks.",
+        "Clarified that these European nations did not participate in the US-Israeli strikes."
+      ],
+      "stance": "neutral",
+      "source_url": "null",
+      "source_date": "2026-02-28",
+      "speaker": "Keir Starmer, British Prime Minister (alongside German Chancellor and French President)",
+      "credibility_score": 5
+    }
+  ],
+  "analysis": {
+    "consensus_points": [
+      "The core of the conflict revolves around Iran's nuclear and ballistic missile programs, which are viewed as significant threats by the US and its allies.",
+      "There is a general consensus among Western nations (US, Germany, France, UK) that Iran's regional activities and support for proxy militias are destabilizing.",
+      "Iran asserts its right to self-defense and views the actions against it as aggressive and a violation of international law.",
+      "Diplomatic channels are generally preferred, but the effectiveness of such channels is debated, especially by the US.",
+      "There is concern for the safety of nationals in the region and the potential economic impact of the conflict."
+    ],
+    "divergence_points": [
+      "The United States explicitly supports military action to degrade Iran's military capabilities, citing imminent threats and past aggression.",
+      "Germany and the UK (as part of a joint statement) condemn Iranian attacks and urge negotiation, but explicitly state they did not participate in the initial strikes and Germany will not participate offensively.",
+      "Iran rejects negotiations under pressure and frames its response as legitimate self-defense, directly threatening US bases and Israel.",
+      "Japan remains cautious, calling for diplomacy, preparing for evacuations, and is not in a position to legally evaluate the US-Israeli actions.",
+      "Germany expresses a degree of support for the US/Israeli actions, believing the Iranian regime's end is near, which differs from the more neutral stance of France and the UK on the strikes themselves."
+    ],
+    "notable_absences": [
+      "Statements from Israel regarding its direct role or justification for potential actions are not present in the provided text.",
+      "Statements from Russia and China regarding the conflict are not included."
+    ]
+  }
+}

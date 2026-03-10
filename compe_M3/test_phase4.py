@@ -27,7 +27,12 @@ import argparse
 import logging
 import sys
 import time
+from pathlib import Path
 from threading import Event
+
+# プロジェクトルート（compe_M3の親）をsys.pathに追加
+# crawl_scheduler.py が content_index をimportするために必要
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -172,5 +177,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

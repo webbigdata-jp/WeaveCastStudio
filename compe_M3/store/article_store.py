@@ -55,6 +55,7 @@ class ArticleStore:
                     crawled_at    TEXT NOT NULL,
                     analyzed_at   TEXT,
                     used_in_briefing BOOLEAN DEFAULT FALSE,
+                    is_breaking      BOOLEAN DEFAULT FALSE,
 
                     UNIQUE(url_hash, crawled_at)
                 )
@@ -70,6 +71,10 @@ class ArticleStore:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_analyzed
                 ON articles(analyzed_at)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_breaking
+                ON articles(is_breaking, importance_score DESC)
             """)
             conn.commit()
         logger.debug(f"ArticleStore initialized: {self.db_path}")
@@ -166,6 +171,27 @@ class ArticleStore:
             )
             conn.commit()
 
+    def mark_breaking(self, article_ids: list[int], breaking: bool = True) -> None:
+        """
+        BREAKINGフラグを立てる（または解除する）。
+
+        CrawlScheduler が importance_score >= 9.0 の記事を検知した際に呼び出す想定。
+        M4 はこのフラグを監視して緊急テロップを流す。
+
+        Args:
+            article_ids: フラグを更新する記事IDのリスト
+            breaking: True=BREAKING扱い、False=解除
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.executemany(
+                "UPDATE articles SET is_breaking = ? WHERE id = ?",
+                [(breaking, aid) for aid in article_ids],
+            )
+            conn.commit()
+        logger.info(
+            f"[ArticleStore] mark_breaking({breaking}) applied to {len(article_ids)} articles"
+        )
+
     # ──────────────────────────────────────────
     # 読み取り系
     # ──────────────────────────────────────────
@@ -236,6 +262,126 @@ class ArticleStore:
             """, (f'%{topic}%', limit)).fetchall()
         return [dict(r) for r in rows]
 
+    # ──────────────────────────────────────────
+    # M4向け検索メソッド
+    # ──────────────────────────────────────────
+
+    def search(
+        self,
+        query: str,
+        min_importance: float = 0.0,
+        limit: int = 10,
+        hours: int | None = None,
+    ) -> list[dict]:
+        """
+        キーワードでtitle・summary・topics・key_entitiesを横断的にOR検索する。
+
+        M4からの「国連についてレポートを出して」のような自然語クエリを想定。
+        分析済み記事（importance_score IS NOT NULL）のみが対象。
+
+        Args:
+            query: 検索キーワード（例: "UN", "Iran", "military"）
+            min_importance: 重要度スコアの下限（0.0 = フィルタなし）
+            limit: 最大取得件数
+            hours: 直近N時間以内に限定する場合に指定（None = 全期間）
+        Returns:
+            list[dict]: 重要度降順の記事リスト
+        """
+        like = f"%{query}%"
+        params: list = [like, like, like, like, min_importance]
+
+        time_filter = ""
+        if hours is not None:
+            cutoff = datetime.now(timezone.utc).isoformat()
+            time_filter = "AND crawled_at >= datetime(?, '-' || ? || ' hours')"
+            params += [cutoff, hours]
+
+        params.append(limit)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(f"""
+                SELECT * FROM articles
+                WHERE importance_score IS NOT NULL
+                  AND importance_score >= ?
+                  AND (
+                      title        LIKE ?
+                   OR summary      LIKE ?
+                   OR topics       LIKE ?
+                   OR key_entities LIKE ?
+                  )
+                  {time_filter}
+                ORDER BY importance_score DESC
+                LIMIT ?
+            """, [min_importance, like, like, like, like]
+                + ([cutoff, hours] if hours is not None else [])
+                + [limit]
+            ).fetchall()
+        logger.debug(f"[ArticleStore] search({query!r}) → {len(rows)} hits")
+        return [dict(r) for r in rows]
+
+    def get_breaking(self, limit: int = 10) -> list[dict]:
+        """
+        BREAKINGフラグが立っている記事を重要度降順で取得する。
+
+        CrawlScheduler がクロール時に importance_score >= 9.0 の記事に
+        mark_breaking() を呼び出しておく前提。
+        M4 はこのメソッドを定期ポーリングして緊急テロップを検知する。
+
+        Args:
+            limit: 最大取得件数
+        Returns:
+            list[dict]: is_breaking=True の記事リスト（重要度降順）
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT * FROM articles
+                WHERE is_breaking = TRUE
+                  AND importance_score IS NOT NULL
+                ORDER BY importance_score DESC, crawled_at DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
+        logger.debug(f"[ArticleStore] get_breaking() → {len(rows)} hits")
+        return [dict(r) for r in rows]
+
+    def get_today_titles(
+        self,
+        min_importance: float = 0.0,
+        analyzed_only: bool = True,
+    ) -> list[dict]:
+        """
+        直近24時間の記事タイトル一覧を重要度降順で返す。
+
+        M4 が「本日の主要ニュース一覧」を生成する際の入力として使用。
+        Gemini に渡しやすいよう、id・title・importance_score・topics の
+        軽量フィールドのみを返す。
+
+        Args:
+            min_importance: 重要度スコアの下限（0.0 = 全件）
+            analyzed_only: True の場合、分析済み（importance_score IS NOT NULL）のみ返す
+        Returns:
+            list[dict]: 各要素は id, title, importance_score, topics, source_name,
+                        crawled_at, is_breaking のみを含む軽量dict
+        """
+        analysis_filter = "AND importance_score IS NOT NULL" if analyzed_only else ""
+        cutoff = datetime.now(timezone.utc).isoformat()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(f"""
+                SELECT
+                    id, title, importance_score, topics,
+                    source_name, crawled_at, is_breaking
+                FROM articles
+                WHERE crawled_at >= datetime(?, '-24 hours')
+                  AND importance_score >= ?
+                  {analysis_filter}
+                ORDER BY importance_score DESC, crawled_at DESC
+            """, (cutoff, min_importance)).fetchall()
+        logger.debug(f"[ArticleStore] get_today_titles() → {len(rows)} articles")
+        return [dict(r) for r in rows]
+
     def get_stats(self) -> dict:
         """格納状況のサマリを返す（デバッグ用）"""
         with sqlite3.connect(self.db_path) as conn:
@@ -255,3 +401,5 @@ class ArticleStore:
             "unanalyzed": total - analyzed,
             "by_source": {row[0]: row[1] for row in by_source},
         }
+
+

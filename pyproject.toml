@@ -15,5 +15,6 @@ dependencies = [
     "pillow>=12.1.1",
     "pydub>=0.25.1",
     "python-dotenv>=1.0",
+    "python-vlc>=3.0.21203",
     "pyyaml>=6.0.3",
 ]

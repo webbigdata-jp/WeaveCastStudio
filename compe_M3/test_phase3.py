@@ -14,6 +14,12 @@ Phase 3 テスト: BriefingComposer → 動画生成フルパイプライン
 
   # フル実行（画像・TTS・動画生成あり）
   uv run test_phase3.py
+
+  # ショートクリップ生成（dry-run）
+  uv run test_phase3.py --short-clips --dry-run
+
+  # ショートクリップ生成（フル実行）
+  uv run test_phase3.py --short-clips
 """
 
 import argparse
@@ -91,11 +97,16 @@ def main():
         "--hours", type=int, default=720,
         help="直近何時間の記事を対象にするか（デフォルト: 720 = 30日）"
     )
+    parser.add_argument(
+        "--short-clips", action="store_true",
+        help="compose() の代わりに compose_short_clips() を実行する"
+    )
     args = parser.parse_args()
 
     logger.info("=== Phase 3 Test: Briefing Composer ===")
-    logger.info(f"  dry_run : {args.dry_run}")
-    logger.info(f"  hours   : {args.hours}")
+    logger.info(f"  dry_run     : {args.dry_run}")
+    logger.info(f"  short_clips : {args.short_clips}")
+    logger.info(f"  hours       : {args.hours}")
 
     # ── 1. shared/ 確認 ──
     logger.info("\n[CHECK 1] shared/ symlink")
@@ -118,52 +129,92 @@ def main():
         logger.error(f"❌ BriefingComposer init failed: {e}")
         sys.exit(1)
 
-    # ── 4. compose 実行 ──
-    mode = "dry_run (script only)" if args.dry_run else "full pipeline"
-    logger.info(f"\n[STEP 2] compose() — {mode}")
-
-    try:
-        result = composer.compose(
-            hours=args.hours,
-            dry_run=args.dry_run,
-        )
-    except RuntimeError as e:
-        logger.error(f"❌ compose() failed: {e}")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"❌ Unexpected error: {e}", exc_info=True)
-        sys.exit(1)
-
-    # ── 5. 結果確認 ──
-    logger.info("\n[RESULT]")
-    logger.info(f"  output_dir        : {result['output_dir']}")
-    logger.info(f"  article_count     : {result['article_count']}")
-    logger.info(f"  briefing_plan     : {result['briefing_plan_path']}")
-    logger.info(f"  script_path       : {result['script_path']}")
-    logger.info(f"  video_path        : {result['video_path'] or '(skipped)'}")
-
-    # 原稿の先頭200文字をプレビュー
-    script_path = Path(result["script_path"])
-    if script_path.exists():
-        preview = script_path.read_text(encoding="utf-8")[:300]
-        logger.info(f"\n[SCRIPT PREVIEW]\n{preview}...")
-
-    if args.dry_run:
-        logger.info(
-            "\n✅ Phase 3 dry_run complete!\n"
-            "原稿を確認後、フル実行するには:\n"
-            "  uv run test_phase3.py"
-        )
-    else:
-        video = Path(result["video_path"]) if result["video_path"] else None
-        if video and video.exists():
-            size_mb = video.stat().st_size / 1024 / 1024
-            logger.info(f"\n✅ Phase 3 complete! Video: {video} ({size_mb:.1f} MB)")
-        else:
-            logger.error("❌ 動画ファイルが生成されませんでした")
+    # ── 4. compose / compose_short_clips 実行 ──
+    if args.short_clips:
+        mode = "short_clips dry_run" if args.dry_run else "short_clips full pipeline"
+        logger.info(f"\n[STEP 2] compose_short_clips() — {mode}")
+        try:
+            result = composer.compose_short_clips(
+                hours=args.hours,
+                dry_run=args.dry_run,
+            )
+        except RuntimeError as e:
+            logger.error(f"❌ compose_short_clips() failed: {e}")
             sys.exit(1)
+        except Exception as e:
+            logger.error(f"❌ Unexpected error: {e}", exc_info=True)
+            sys.exit(1)
+
+        # ── ショートクリップ結果確認 ──
+        logger.info("\n[RESULT]")
+        logger.info(f"  output_dir    : {result['output_dir']}")
+        logger.info(f"  total         : {result['total']}")
+        logger.info(f"  succeeded     : {result['succeeded']}")
+        for i, clip in enumerate(result.get("clips", []), start=1):
+            video_info = clip.get("video_path") or "(skipped)"
+            logger.info(
+                f"  clip {i:03d} | "
+                f"article_id={clip['article_id']} | "
+                f"title={clip.get('title','')[:40]} | "
+                f"video={video_info}"
+            )
+
+        if args.dry_run:
+            logger.info("\n✅ Phase 3 short_clips dry_run complete!")
+        else:
+            if result["succeeded"] == 0:
+                logger.error("❌ ショートクリップが1件も生成されませんでした")
+                sys.exit(1)
+            logger.info(
+                f"\n✅ Phase 3 short_clips complete! "
+                f"{result['succeeded']}/{result['total']} clips generated."
+            )
+
+    else:
+        mode = "dry_run (script only)" if args.dry_run else "full pipeline"
+        logger.info(f"\n[STEP 2] compose() — {mode}")
+
+        try:
+            result = composer.compose(
+                hours=args.hours,
+                dry_run=args.dry_run,
+            )
+        except RuntimeError as e:
+            logger.error(f"❌ compose() failed: {e}")
+            sys.exit(1)
+        except Exception as e:
+            logger.error(f"❌ Unexpected error: {e}", exc_info=True)
+            sys.exit(1)
+
+        # ── 結果確認 ──
+        logger.info("\n[RESULT]")
+        logger.info(f"  output_dir        : {result['output_dir']}")
+        logger.info(f"  article_count     : {result['article_count']}")
+        logger.info(f"  briefing_plan     : {result['briefing_plan_path']}")
+        logger.info(f"  script_path       : {result['script_path']}")
+        logger.info(f"  video_path        : {result['video_path'] or '(skipped)'}")
+
+        # 原稿の先頭300文字をプレビュー
+        script_path = Path(result["script_path"])
+        if script_path.exists():
+            preview = script_path.read_text(encoding="utf-8")[:300]
+            logger.info(f"\n[SCRIPT PREVIEW]\n{preview}...")
+
+        if args.dry_run:
+            logger.info(
+                "\n✅ Phase 3 dry_run complete!\n"
+                "原稿を確認後、フル実行するには:\n"
+                "  uv run test_phase3.py"
+            )
+        else:
+            video = Path(result["video_path"]) if result["video_path"] else None
+            if video and video.exists():
+                size_mb = video.stat().st_size / 1024 / 1024
+                logger.info(f"\n✅ Phase 3 complete! Video: {video} ({size_mb:.1f} MB)")
+            else:
+                logger.error("❌ 動画ファイルが生成されませんでした")
+                sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
-

@@ -220,7 +220,7 @@ REQUIREMENTS:
     logger.info(f"[ShortClip] Script generated: {word_count} words")
     return script
 
-
+class BriefingComposer:
     """
     M3 ブリーフィング動画生成のオーケストレーター。
 

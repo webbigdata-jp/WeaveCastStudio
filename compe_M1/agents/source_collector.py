@@ -3,77 +3,106 @@ STEP 2: 各国政府公式見解の収集
 
 処理フロー:
   1. Gemini + Google Search Tool で各国の公式見解と参照URLを検索
-  2. 取得したURLをnodriverで実際にブラウザで開き、ページ本文を取得
+  2. 取得したURLをDrissionPageで実際にブラウザで開き、ページ本文を取得
   3. スクリーンショットを output/screenshots/ に保存（動画スライドの素材として使用可能）
   4. ページ本文をGeminiに渡して要点を再抽出
 
-nodriverはasyncライブラリのため、このモジュールは非同期関数を提供する。
-呼び出し元（main.py）では asyncio で実行すること。
+DrissionPageは同期ライブラリのため、このモジュールは通常の同期関数を提供する。
+呼び出し元（main.py）では asyncio.run() は不要。
 """
 
-import asyncio
 import logging
 import re
 import time
 from pathlib import Path
 from google import genai
 from google.genai import types
+from DrissionPage import ChromiumPage, ChromiumOptions
 
 logger = logging.getLogger(__name__)
 
 # スクリーンショット保存先（output/screenshots/）
 SCREENSHOT_DIR = Path(__file__).parent.parent / "output" / "screenshots"
 
-# nodriverでページ読み込み後に待機する秒数（JS描画待ち）
+# ページ読み込み後に待機する秒数（JS描画待ち）
 PAGE_LOAD_WAIT = 3.0
+
+# ヘッドレスモード設定（True: バックグラウンド実行、False: ブラウザウィンドウを表示）
+HEADLESS = True
+
+
+def _build_chromium_options(headless: bool = HEADLESS) -> ChromiumOptions:
+    """
+    DrissionPage用のChromiumOptionsを生成する。
+
+    Args:
+        headless: Trueでヘッドレス動作（デフォルトはモジュール定数 HEADLESS に従う）
+    Returns:
+        設定済みの ChromiumOptions インスタンス
+    """
+    options = ChromiumOptions()
+    if headless:
+        options.headless(True)
+    options.set_argument("--no-sandbox")
+    options.set_argument("--disable-gpu")
+    return options
 
 
 def _extract_urls_from_text(text: str) -> list[str]:
-    """テキスト中のURLをすべて抽出する"""
+    """
+    テキスト中のURLをすべて抽出する。
+    Googleの内部リダイレクトURL（vertexaisearch.cloud.google.com）は除外する。
+    """
     pattern = r'https?://[^\s\)\]\,\"\'<>]+'
-    return list(dict.fromkeys(re.findall(pattern, text)))  # 重複除去・順序保持
+    urls = re.findall(pattern, text)
+    # Gemini grounding用の内部リダイレクトURLは実際のページではないため除外
+    urls = [u for u in urls if "vertexaisearch.cloud.google.com" not in u]
+    return list(dict.fromkeys(urls))  # 重複除去・順序保持
 
 
-async def _fetch_page_with_nodriver(
-    browser,
+def _fetch_page_with_drissionpage(
+    page,
     url: str,
     screenshot_path: Path,
 ) -> str:
     """
-    nodriverで指定URLをブラウザで開き、ページ本文とスクリーンショットを取得する。
+    DrissionPageで指定URLをブラウザで開き、ページ本文とスクリーンショットを取得する。
 
+    Args:
+        page: ChromiumPage オブジェクト
+        url: 取得対象のURL
+        screenshot_path: スクリーンショット保存先パス
     Returns:
-        ページのテキスト本文（取得失敗時は空文字列）
+        ページのHTML本文（取得失敗時は空文字列）
     """
     try:
-        logger.info(f"    [nodriver] Opening: {url}")
-        page = await browser.get(url)
-        await asyncio.sleep(PAGE_LOAD_WAIT)  # JS描画待ち
+        logger.info(f"    [DrissionPage] Opening: {url}")
+        page.get(url)
+        time.sleep(PAGE_LOAD_WAIT)  # JS描画待ち
 
         # スクリーンショット保存
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        await page.save_screenshot(str(screenshot_path))
-        logger.info(f"    [nodriver] Screenshot saved: {screenshot_path.name}")
+        page.get_screenshot(path=str(screenshot_path.parent), name=screenshot_path.name)
+        logger.info(f"    [DrissionPage] Screenshot saved: {screenshot_path.name}")
 
         # ページ本文HTML取得
-        content = await page.get_content()
-        await page.close()
+        content = page.html
         return content or ""
 
     except Exception as e:
-        logger.warning(f"    [nodriver] Failed to fetch {url}: {e}")
+        logger.warning(f"    [DrissionPage] Failed to fetch {url}: {e}")
         return ""
 
 
-async def _collect_one_country_async(
+def _collect_one_country(
     client: genai.Client,
-    browser,
+    page,
     country: str,
     topic: dict,
     screenshot_dir: Path,
 ) -> tuple[str, dict]:
     """
-    1カ国分の情報収集を行う（非同期）。
+    1カ国分の情報収集を行う（同期）。
 
     Returns:
         (country, {"text": str, "urls": list[str], "screenshot_paths": list[str]})
@@ -83,19 +112,29 @@ async def _collect_one_country_async(
     # --- Step A: Gemini + Google Search でURL付き要約を取得 ---
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.5-flash-lite",
             contents=(
                 f"Search for the latest official government statement from {country} "
                 f"regarding: {topic['title']}. "
                 f"Focus on: foreign ministry statements, presidential/PM remarks, "
                 f"UN ambassador statements issued in 2026. "
-                f"Return: the source URL, date of statement, name and title of speaker, "
-                f"and the key points of their position in 3-5 bullet points. "
+                f"Return the following in plain text format:\n"
+                f"1. SOURCE_URL: <the full direct URL to the official page, e.g. https://www.state.gov/...>\n"
+                f"2. DATE: <date of statement>\n"
+                f"3. SPEAKER: <name and title>\n"
+                f"4. KEY_POINTS:\n"
+                f"   - <bullet point 1>\n"
+                f"   - <bullet point 2>\n"
+                f"   ...\n"
+                f"IMPORTANT: Write the actual direct URL of the source page in the SOURCE_URL field. "
+                f"Do not omit or shorten the URL.\n"
                 f"If no official statement can be found, say 'NO_STATEMENT_FOUND'."
             ),
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
                 response_modalities=["TEXT"],
+                thinking_config=types.ThinkingConfig(thinking_budget=2048),
+                max_output_tokens=2048,
             ),
         )
         gemini_text = response.text.strip()
@@ -107,7 +146,7 @@ async def _collect_one_country_async(
         logger.warning(f"  -> No statement found for {country}, skipping.")
         return country, {}
 
-    # --- Step B: URLを抽出してnodriverでページを取得 ---
+    # --- Step B: URLを抽出してDrissionPageでページを取得 ---
     urls = _extract_urls_from_text(gemini_text)
     logger.info(f"  -> Found {len(urls)} URL(s): {urls[:3]}")  # 最初の3件をログ表示
 
@@ -118,7 +157,7 @@ async def _collect_one_country_async(
         safe_country = re.sub(r'[^a-zA-Z0-9]', '_', country)
         screenshot_path = screenshot_dir / f"{safe_country}_{i:02d}.png"
 
-        page_html = await _fetch_page_with_nodriver(browser, url, screenshot_path)
+        page_html = _fetch_page_with_drissionpage(page, url, screenshot_path)
 
         if page_html:
             # HTMLタグを除去して本文テキストを抽出（簡易）
@@ -146,6 +185,8 @@ async def _collect_one_country_async(
                 ),
                 config=types.GenerateContentConfig(
                     response_modalities=["TEXT"],
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    max_output_tokens=2048,
                 ),
             )
             final_text = refine_response.text.strip()
@@ -165,14 +206,20 @@ async def _collect_one_country_async(
     return country, result
 
 
-async def collect_government_statements_async(
+def collect_government_statements(
     client: genai.Client,
     topic: dict,
     screenshot_dir: Path = SCREENSHOT_DIR,
+    headless: bool = HEADLESS,
 ) -> dict:
     """
-    各国の政府公式見解をGoogle Search + nodriverで収集する（非同期版）。
+    各国の政府公式見解をGoogle Search + DrissionPageで収集する。
 
+    Args:
+        client: Gemini APIクライアント
+        topic: トピック辞書（"title" および "countries_of_interest" キーを含む）
+        screenshot_dir: スクリーンショット保存先ディレクトリ
+        headless: Trueでヘッドレス動作（デフォルトはモジュール定数 HEADLESS に従う）
     Returns:
         {
             "country": {
@@ -183,29 +230,27 @@ async def collect_government_statements_async(
             ...
         }
     """
-    import nodriver as uc
-
     screenshot_dir.mkdir(parents=True, exist_ok=True)
 
-    # nodriverブラウザを起動（headless=Trueでバックグラウンド実行）
-    browser = await uc.start(headless=True)
-    logger.info("nodriver browser started.")
+    options = _build_chromium_options(headless=headless)
+    page = ChromiumPage(addr_or_opts=options)
+    logger.info(f"DrissionPage browser started (headless={headless}).")
 
     raw_statements = {}
     try:
         for country in topic["countries_of_interest"]:
-            country_key, result = await _collect_one_country_async(
-                client, browser, country, topic, screenshot_dir
+            country_key, result = _collect_one_country(
+                client, page, country, topic, screenshot_dir
             )
             if result:
                 raw_statements[country_key] = result
 
             # Google Search Toolのレート制限に配慮
-            await asyncio.sleep(2)
+            time.sleep(2)
 
     finally:
-        browser.stop()
-        logger.info("nodriver browser stopped.")
+        page.quit()
+        logger.info("DrissionPage browser stopped.")
 
     logger.info(
         f"Collection complete: {len(raw_statements)}/{len(topic['countries_of_interest'])} countries"
@@ -213,14 +258,3 @@ async def collect_government_statements_async(
     return raw_statements
 
 
-def collect_government_statements(client: genai.Client, topic: dict) -> dict:
-    """
-    同期ラッパー。main.pyから呼び出す際はこちらを使う。
-
-    Returns:
-        collect_government_statements_async() と同じ構造の辞書
-    """
-    import nodriver as uc
-    return uc.loop().run_until_complete(
-        collect_government_statements_async(client, topic)
-    )

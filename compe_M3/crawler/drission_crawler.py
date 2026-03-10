@@ -38,7 +38,7 @@ NEWS_PATH_KEYWORDS = [
 def _make_chromium_options() -> ChromiumOptions:
     """ヘッドレスChromiumの起動オプションを生成する"""
     co = ChromiumOptions()
-    co.headless()                              # ヘッドレスモード
+    #co.headless()                              # ヘッドレスモード
     co.set_argument("--no-sandbox")
     co.set_argument("--disable-dev-shm-usage")
     co.set_argument("--disable-gpu")
@@ -116,19 +116,24 @@ class DrissionCrawler:
         # ── STEP A: TOPページにアクセス ──
         try:
             page.get(source["url"])
+            # JS描画完了まで確実に待機（DrissionPageのpage.get()はDOMロード完了まで
+            # 待つが、JS描画が終わっていない場合があるため明示的に追加）
+            page.wait.doc_loaded()
+            time.sleep(2)
         except Exception as e:
             logger.warning(f"[CRAWL] Failed to load top page: {e}")
             return articles
 
-        # JS描画待ち（DrissionPageはロード完了まで自動待機するが念のため）
-        time.sleep(2)
+        # リダイレクト後の実際のURLを取得
+        actual_url = page.url or source["url"]
+        logger.info(f"[CRAWL] Loaded: {actual_url} (title: {page.title[:50] if page.title else 'N/A'})")
 
         # ── STEP B: キャプチャ + HTML保存 ──
         top_screenshot = source_dir / f"{ts}_top.png"
         top_html_path = source_dir / f"{ts}_top.html"
 
         try:
-            page.get_screenshot(path=str(top_screenshot), full_page=True)
+            page.get_screenshot(path=str(top_screenshot), left_top=(0, 0), right_bottom=(1920, 1080))
         except Exception as e:
             logger.warning(f"[CRAWL] Screenshot failed for top page: {e}")
 
@@ -141,7 +146,7 @@ class DrissionCrawler:
         articles.append({
             "source_id": source["id"],
             "source_name": source["name"],
-            "url": source["url"],
+            "url": actual_url,  # リダイレクト後の実際のURLを保存
             "title": title or f"{source['name']} - Top Page",
             "screenshot_path": str(top_screenshot),
             "html_path": str(top_html_path),
@@ -153,8 +158,8 @@ class DrissionCrawler:
         })
 
         # ── STEP C: 関連記事URLを抽出 ──
-        related_urls = self._extract_article_links(html_content, source)
-        logger.debug(
+        related_urls = self._extract_article_links(html_content, source, actual_url)
+        logger.info(
             f"[CRAWL] {source['id']}: found {len(related_urls)} related URLs"
         )
 
@@ -187,11 +192,11 @@ class DrissionCrawler:
         """個別の記事ページをキャプチャ + HTML保存する"""
         try:
             page.get(url)
+            page.wait.doc_loaded()
+            time.sleep(1.5)
         except Exception as e:
             logger.warning(f"[CRAWL] Failed to load article: {url} — {e}")
             return None
-
-        time.sleep(1.5)
 
         url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
         screenshot_path = source_dir / f"{ts}_article_{idx:02d}_{url_hash}.png"
@@ -199,7 +204,7 @@ class DrissionCrawler:
 
         # full_page=False: ファーストビューのみ（動画素材として使いやすい）
         try:
-            page.get_screenshot(path=str(screenshot_path), full_page=False)
+            page.get_screenshot(path=str(screenshot_path), left_top=(0, 0), right_bottom=(1920, 1080))
         except Exception as e:
             logger.warning(f"[CRAWL] Screenshot failed: {url} — {e}")
 
@@ -273,7 +278,7 @@ class DrissionCrawler:
 
         screenshot_path = source_dir / f"{ts}_x_timeline.png"
         try:
-            page.get_screenshot(path=str(screenshot_path), full_page=False)
+            page.get_screenshot(path=str(screenshot_path), left_top=(0, 0), right_bottom=(1920, 1080))
         except Exception as e:
             logger.warning(f"[CRAWL] Screenshot failed for X: {e}")
 
@@ -298,16 +303,24 @@ class DrissionCrawler:
     # ──────────────────────────────────────────
 
     def _extract_article_links(
-        self, html_content: str, source: dict
+        self, html_content: str, source: dict, actual_url: str = None
     ) -> list[str]:
         """
         HTMLから関連ニュース記事のURLを抽出する。
         ソース固有のCSSセレクタがある場合はそれを優先し、
         結果が少ない場合はヒューリスティックな汎用抽出で補完する。
+
+        Args:
+            html_content: ページのHTML文字列
+            source: sources.yamlの1エントリ
+            actual_url: リダイレクト後の実際のURL（Noneの場合はsource["url"]を使用）
         """
         soup = BeautifulSoup(html_content, "html.parser")
-        base_url = source["url"]
+        # リダイレクト後の実URLをベースとして使用
+        base_url = actual_url or source["url"]
         base_netloc = urlparse(base_url).netloc
+        # サブドメイン違いも許容（例: news.un.org → un.org）
+        base_domain = ".".join(base_netloc.split(".")[-2:])
         links: set[str] = set()
 
         # ── ソース固有セレクタによる抽出 ──
@@ -318,7 +331,9 @@ class DrissionCrawler:
                 href = a_tag.get("href")
                 if href:
                     full_url = urljoin(base_url, href)
-                    if urlparse(full_url).netloc == base_netloc:
+                    parsed_netloc = urlparse(full_url).netloc
+                    # 同一ドメイン or 同一親ドメイン配下ならOK
+                    if base_domain in parsed_netloc:
                         links.add(full_url)
 
         # ── 結果が不足している場合はヒューリスティック補完 ──
@@ -327,15 +342,16 @@ class DrissionCrawler:
                 href = a_tag["href"]
                 full_url = urljoin(base_url, href)
                 parsed = urlparse(full_url)
-                if parsed.netloc == base_netloc:
+                if base_domain in parsed.netloc:
                     if any(kw in href.lower() for kw in NEWS_PATH_KEYWORDS):
                         links.add(full_url)
 
-        # TOPページ自体は除外
-        links.discard(base_url)
-        links.discard(base_url.rstrip("/"))
+        # TOPページ自体は除外（元URL・リダイレクト後URL両方）
+        for u in [base_url, base_url.rstrip("/"), source["url"], source["url"].rstrip("/")]:
+            links.discard(u)
 
         return list(links)
+
 
     def _extract_text(self, page: ChromiumPage) -> str:
         """
@@ -344,7 +360,7 @@ class DrissionCrawler:
         なければbody全体からノイズ要素を除いたテキストを返す。
         """
         js = """
-            () => {
+            (() => {
                 const selectors = [
                     'article', 'main', '[role="main"]',
                     '.article-body', '.story-body',
@@ -362,11 +378,12 @@ class DrissionCrawler:
                     '.nav, .footer, .header, .sidebar, .menu, .ad'
                 ).forEach(el => el.remove());
                 return body.innerText;
-            }
+            })()
         """
         try:
-            text = page.run_js(js)
+            text = page.run_js(js, as_expr=True)  # ← as_expr=True を追加
             return text.strip() if text else ""
         except Exception as e:
             logger.warning(f"[CRAWL] Text extraction failed: {e}")
             return ""
+

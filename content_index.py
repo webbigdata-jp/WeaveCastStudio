@@ -206,6 +206,27 @@ class ContentIndexManager:
             self._save(data)
         logger.info(f"[ContentIndex] Added: {entry['id']} ({entry['type']})")
 
+    def remove_entry(self, entry_id: str) -> bool:
+        """
+        指定 id のエントリを削除する。
+
+        Args:
+            entry_id: 削除対象のエントリ id
+        Returns:
+            bool: 対象エントリが見つかり削除できた場合 True
+        """
+        with self._lock:
+            data = self._load()
+            before = len(data["entries"])
+            data["entries"] = [e for e in data["entries"] if e["id"] != entry_id]
+            if len(data["entries"]) == before:
+                logger.warning(f"[ContentIndex] remove_entry: id not found: {entry_id}")
+                return False
+            data["last_updated"] = datetime.now(timezone.utc).isoformat()
+            self._save(data)
+        logger.info(f"[ContentIndex] Removed: {entry_id}")
+        return True
+
     def set_breaking(self, entry_id: str, is_breaking: bool = True) -> bool:
         """
         is_breaking フラグを更新する。

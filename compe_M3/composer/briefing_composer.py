@@ -346,9 +346,14 @@ class BriefingComposer:
         used_ids = [a["id"] for a in articles if a.get("id")]
         self._store.mark_used_in_briefing(used_ids)
 
+        # ── 動画ファイルの存在確認 ──
+        if not Path(video_path).exists():
+            logger.error(f"[Composer] Video file not found after compose_video(): {video_path}")
+            raise RuntimeError(f"動画ファイルが生成されませんでした: {video_path}")
+
         result["video_path"] = str(video_path)
 
-        # ── ContentIndex に登録（動画生成時）──
+        # ── ContentIndex に登録（動画ファイル存在確認済み）──
         if result["video_path"]:
             mgr = ContentIndexManager()
             # ブリーフィング全体動画
@@ -526,9 +531,17 @@ class BriefingComposer:
                     output_dir=clip_dir,
                 )
                 logger.info(f"[ShortClip] Video: {video_path}")
+
+                # ── 動画ファイルの存在確認 ──
+                if not Path(video_path).exists():
+                    logger.error(
+                        f"[ShortClip] Video file not found after compose_video(): {video_path}"
+                    )
+                    raise RuntimeError(f"動画ファイルが生成されませんでした: {video_path}")
+
                 clip_entry["video_path"] = str(video_path)
 
-                # ── ContentIndex 登録 ──
+                # ── ContentIndex 登録（動画ファイル存在確認済み）──
                 tags = _parse_json_field(article.get("topics"), [])
                 entry = make_entry(
                     id=f"m3_clip_{article['id']}_{ts}",

@@ -101,12 +101,17 @@ def main():
         "--short-clips", action="store_true",
         help="compose() の代わりに compose_short_clips() を実行する"
     )
+    parser.add_argument(
+        "--limit", type=int, default=None,
+        help="生成するクリップ数の上限（例: --limit 1 で1件のみ生成）"
+    )
     args = parser.parse_args()
 
     logger.info("=== Phase 3 Test: Briefing Composer ===")
     logger.info(f"  dry_run     : {args.dry_run}")
     logger.info(f"  short_clips : {args.short_clips}")
     logger.info(f"  hours       : {args.hours}")
+    logger.info(f"  limit       : {args.limit}")
 
     # ── 1. shared/ 確認 ──
     logger.info("\n[CHECK 1] shared/ symlink")
@@ -133,9 +138,20 @@ def main():
     if args.short_clips:
         mode = "short_clips dry_run" if args.dry_run else "short_clips full pipeline"
         logger.info(f"\n[STEP 2] compose_short_clips() — {mode}")
+
+        # --limit が指定された場合、article_ids で件数を絞る
+        article_ids = None
+        if args.limit is not None:
+            from store.article_store import ArticleStore
+            store = ArticleStore()
+            top_articles = store.get_top_articles(limit=args.limit, hours=args.hours)
+            article_ids = [a["id"] for a in top_articles]
+            logger.info(f"  --limit {args.limit} 適用: article_ids={article_ids}")
+
         try:
             result = composer.compose_short_clips(
                 hours=args.hours,
+                article_ids=article_ids,
                 dry_run=args.dry_run,
             )
         except RuntimeError as e:

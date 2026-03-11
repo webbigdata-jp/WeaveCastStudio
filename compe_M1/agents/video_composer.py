@@ -58,7 +58,8 @@ def create_video(
     """
     画像スライドショー + 音声 → MP4動画を ffmpeg で生成する。
 
-    各画像の表示時間は音声の総長 / 画像枚数で均等割り当て。
+    画像1枚の場合: -loop 1 方式（タイムスタンプ問題を回避）
+    画像複数枚の場合: concat demuxer 方式（均等割り当て）
 
     Args:
         image_paths: スライド画像のパスリスト（表示順）
@@ -71,62 +72,83 @@ def create_video(
     # 音声の長さを取得
     audio = AudioSegment.from_wav(str(audio_path))
     total_duration = len(audio) / 1000.0
-    duration_per_image = total_duration / len(image_paths)
 
     logger.info(
-        f"Composing video: {len(image_paths)} slides × {duration_per_image:.1f}s "
-        f"= {total_duration:.1f}s total"
+        f"Composing video: {len(image_paths)} slides, {total_duration:.1f}s total"
     )
 
-    # ffmpeg concat用のテキストファイルを一時ファイルに書き出す
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".txt", delete=False
-    ) as concat_file:
-        concat_path = concat_file.name
-        for img_path in image_paths:
-            concat_file.write(f"file '{img_path.resolve()}'\n")
-            concat_file.write(f"duration {duration_per_image:.4f}\n")
-        # ffmpegのconcat demuxerは最後のファイルを2回書く必要がある
-        concat_file.write(f"file '{image_paths[-1].resolve()}'\n")
-
-    # ffmpegコマンド構築
     vf_filter = (
         f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,"
         f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,"
         f"format=yuv420p"
     )
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", concat_path,
-        "-i", str(audio_path),
-        "-vf", vf_filter,
-        "-c:v", "libx264",
-        "-preset", VIDEO_PRESET,
-        "-crf", str(VIDEO_CRF),
-        "-c:a", "aac",
-        "-b:a", AUDIO_BITRATE,
-        "-shortest",
-        "-movflags", "+faststart",
-        str(output_path),
-    ]
+    if len(image_paths) == 1:
+        # 静止画1枚の場合: -loop 1 方式
+        # concat demuxer は長時間静止画でタイムスタンプ変換エラーが出るため使用しない
+        cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1",
+            "-i", str(image_paths[0].resolve()),
+            "-i", str(audio_path),
+            "-vf", vf_filter,
+            "-c:v", "libx264",
+            "-preset", VIDEO_PRESET,
+            "-crf", str(VIDEO_CRF),
+            "-c:a", "aac",
+            "-b:a", AUDIO_BITRATE,
+            "-shortest",
+            "-movflags", "+faststart",
+            str(output_path),
+        ]
+        logger.info(f"Running ffmpeg (single image / -loop 1): {' '.join(cmd)}")
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            logger.info(f"Video created: {output_path}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"ffmpeg failed:\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}")
+            raise
 
-    logger.info(f"Running ffmpeg: {' '.join(cmd)}")
-    try:
-        result = subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        logger.info(f"Video created: {output_path}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"ffmpeg failed:\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}")
-        raise
-    finally:
-        # 一時ファイルを削除
-        Path(concat_path).unlink(missing_ok=True)
+    else:
+        # 複数枚の場合: concat demuxer 方式
+        duration_per_image = total_duration / len(image_paths)
+        concat_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False
+            ) as concat_file:
+                concat_path = concat_file.name
+                for img_path in image_paths:
+                    concat_file.write(f"file '{img_path.resolve()}'\n")
+                    concat_file.write(f"duration {duration_per_image:.4f}\n")
+                # ffmpegのconcat demuxerは最後のファイルを2回書く必要がある
+                concat_file.write(f"file '{image_paths[-1].resolve()}'\n")
+
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0",
+                "-i", concat_path,
+                "-i", str(audio_path),
+                "-vf", vf_filter,
+                "-c:v", "libx264",
+                "-preset", VIDEO_PRESET,
+                "-crf", str(VIDEO_CRF),
+                "-c:a", "aac",
+                "-b:a", AUDIO_BITRATE,
+                "-shortest",
+                "-movflags", "+faststart",
+                str(output_path),
+            ]
+            logger.info(f"Running ffmpeg (concat): {' '.join(cmd)}")
+            try:
+                subprocess.run(cmd, check=True, capture_output=True, text=True)
+                logger.info(f"Video created: {output_path}")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"ffmpeg failed:\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}")
+                raise
+        finally:
+            if concat_path:
+                Path(concat_path).unlink(missing_ok=True)
 
 
 def compose_video(
@@ -142,6 +164,9 @@ def compose_video(
     merged_audio_path = output_dir / "audio" / "full_narration.wav"
     output_video_path = output_dir / "video" / "briefing.mp4"
 
+    # 出力ディレクトリ作成
+    output_video_path.parent.mkdir(parents=True, exist_ok=True)
+    
     # 音声結合
     merge_audio_segments(audio_segments, merged_audio_path)
 

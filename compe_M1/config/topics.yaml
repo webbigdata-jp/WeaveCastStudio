@@ -1,17 +1,51 @@
+# WeaveCast M1 — トピック定義
+#
+# 全トピックを一括処理し、以下を生成する:
+#   - 全体ブリーフィング動画（3-5分）
+#   - トピック別ショートクリップ（各30秒程度）
+#   - 「本日のニュース一覧」画像
+#
+# search_countries はヒント。指定がなくても世界各国の視点を検索に含める。
+
+search_countries:
+  - "United States"
+  - "Iran"
+  - "Israel"
+  - "Russia"
+  - "China"
+
 topics:
-  - title: "Iran Conflict 2026"
+  - title: "ホルムズ海峡封鎖"
+    title_en: "Strait of Hormuz blockade"
     query_keywords:
-      - "Iran conflict official statement 2026"
-        #      - "Iran war government response 2026"
-        #      - "Iran crisis diplomatic position 2026"
-    countries_of_interest:
-      - "United States"
-        #      - "Israel"
-        #      - "Iran"
-        #      - "Russia"
-        #      - "China"
-        #      - "Japan"
-        #      - "United Kingdom"
-        #      - "France"
-        #      - "Germany"
-        #      - "Saudi Arabia"
+      - "Strait of Hormuz blockade 2026"
+      - "Iran Hormuz closure shipping"
+    importance_score: 9.0
+    tags: ["hormuz", "iran", "shipping", "military"]
+
+  - title: "イラン新最高指導者"
+    title_en: "New Iranian Supreme Leader"
+    query_keywords:
+      - "New Iranian Supreme Leader 2026"
+      - "Mojtaba Khamenei supreme leader"
+    importance_score: 8.5
+    tags: ["iran", "leadership", "politics"]
+
+  - title: "アメリカ軍 損失"
+    title_en: "US military losses"
+    query_keywords:
+      - "Iran's counterattack against the United States 2026"
+      - "Losses of US Air Force aircraft"
+    importance_score: 8.5
+    tags: ["military", "Damage", "war"]
+
+
+  - title: "イラン女子校への空爆"
+    title_en: "Airstrikes on girls schools in Iran"
+    query_keywords:
+      - "Airstrikes on girls schools in Iran 2026"
+    importance_score: 9.5
+    tags: ["iran", "airstrikes", "civilian", "humanitarian"]
+    
+    
+    

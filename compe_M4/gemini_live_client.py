@@ -43,6 +43,14 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
+from breaking_news_server import (
+    TickerState,
+    start_server as start_ticker_server,
+    poll_article_store,
+    DEFAULT_PORT as TICKER_PORT,
+)
+
+
 # ── プロジェクトルートを sys.path に追加 ──────────────────────────
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent
@@ -241,7 +249,13 @@ def _build_system_instruction(
 【応答ルール】
 - 応答は日本語で簡潔に行う。
 - ツールを呼び出す場合は「〇〇の動画を再生します」「〇〇の地図を表示します」など一言添える。
-- ジャーナリストはライブ配信中のため、余計な前置きは不要。"""
+- ジャーナリストはライブ配信中のため、余計な前置きは不要。
+- 画面下部にニュースティッカーが常時スクロールしている。
+- ArticleStore に is_breaking=True の記事が入ると、ティッカー上で赤背景で強調表示される。
+- ジャーナリストが「今の速報は何？」「ブレーキングニュースについて教えて」などと
+  質問してきたら、search_articles ツールで is_breaking 記事を検索し、
+  口頭で解説すること。関連するスクリーンショットや動画があれば show_image / play_video で表示すること。
+"""
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -685,12 +699,32 @@ async def _main():
     window.start()
     register_hotkeys(window)
 
+    # ── Breaking News ティッカーサーバ起動 ──
+    ticker_state = TickerState()
+    ticker_runner = await start_ticker_server(ticker_state)
+    ticker_poll_task = asyncio.create_task(
+        poll_article_store(ticker_state, _DB_PATH)
+    )
+    logger.info(
+        f"Breaking News ティッカー起動: http://127.0.0.1:{TICKER_PORT}/overlay"
+    )
+
     client = GeminiLiveClient(window, content_list, today_titles, image_asset_mgr)
     try:
         await client.run()
     finally:
+        # ティッカー停止
+        ticker_poll_task.cancel()
+        try:
+            await ticker_poll_task
+        except asyncio.CancelledError:
+            pass
+        await ticker_runner.cleanup()
+        logger.info("Breaking News ティッカー停止")
+
         window.close()
         client.close()
+
 
 
 if __name__ == "__main__":

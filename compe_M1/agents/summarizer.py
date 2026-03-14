@@ -1,6 +1,7 @@
 """
 STEP 3: 構造化要約の生成
-収集した生テキストを統一JSONフォーマットに変換する
+収集した生テキストを統一JSONフォーマットに変換する。
+トピック単位の情報を「トピック×各国の反応」として構造化する。
 """
 
 import json
@@ -16,20 +17,21 @@ def _normalize_raw_statements(raw_statements: dict) -> tuple[str, dict]:
     """
     raw_statementsを正規化する。
 
-    source_collectorの新形式:
-        {"country": {"text": "...", "urls": [...], "screenshot_paths": [...]}}
-    旧形式（後方互換）:
+    新形式（トピックキー）:
+        {"topic_title": {"text": "...", "urls": [...], ...}}
+    旧形式（国キー / 後方互換）:
+        {"country": {"text": "...", "urls": [...]}}
         {"country": "raw text string"}
+
+    __backup__ 系キーも含めて処理する。
 
     Returns:
         (statements_text, url_map)
-        - statements_text: Geminiに渡す結合テキスト
-        - url_map: {"country": ["url1", "url2", ...]}
     """
     statements_text_parts = []
     url_map = {}
 
-    for country, value in raw_statements.items():
+    for key, value in raw_statements.items():
         if isinstance(value, dict):
             text = value.get("text", "")
             urls = value.get("urls", [])
@@ -37,67 +39,82 @@ def _normalize_raw_statements(raw_statements: dict) -> tuple[str, dict]:
             text = str(value)
             urls = []
 
-        statements_text_parts.append(f"=== {country} ===\n{text}")
-        url_map[country] = urls
+        statements_text_parts.append(f"=== {key} ===\n{text}")
+        url_map[key] = urls
 
     return "\n\n".join(statements_text_parts), url_map
 
 
 def generate_structured_summary(
     client: genai.Client,
-    topic: dict,
+    topics: list[dict],
     raw_statements: dict,
     max_retries: int = 3,
 ) -> dict:
     """
-    生テキストの各国見解を構造化JSONに変換する。
+    生テキストの各トピック情報を構造化JSONに変換する。
 
     Args:
         client: 初期化済みの genai.Client
-        topic: トピック定義辞書
+        topics: トピック定義のリスト [{"title": str, "title_en": str, ...}, ...]
         raw_statements: source_collectorが返す辞書
-            新形式: {"country": {"text": str, "urls": list, "screenshot_paths": list}}
-            旧形式: {"country": "raw text"}  <- 後方互換で対応
         max_retries: JSON parse失敗時の最大リトライ回数
 
     Returns:
-        briefing_data 辞書（source_urlsフィールドにURL一覧を含む）
+        briefing_data 辞書
     """
     statements_text, url_map = _normalize_raw_statements(raw_statements)
 
-    prompt = f"""You are a diplomatic analyst. Analyze the following government statements
-about "{topic['title']}" and produce a structured JSON summary.
+    # トピック一覧を明示
+    topic_titles = [t["title"] for t in topics]
+    topic_list_str = ", ".join(f"「{t}」" for t in topic_titles)
 
-Raw statements:
+    prompt = f"""あなたは外交アナリストです。以下の収集データを分析し、
+各トピックに関する構造化JSON要約を作成してください。
+
+対象トピック: {topic_list_str}
+
+収集データ:
 {statements_text}
 
-Output ONLY valid JSON (no markdown fences, no preamble) with this exact schema:
+以下のスキーマに厳密に従った有効なJSONのみを出力してください（マークダウンのフェンスや前置きテキストは不要）:
 {{
-  "topic": "{topic['title']}",
   "generated_at": "{datetime.now(timezone.utc).isoformat()}",
   "briefing_sections": [
     {{
-      "country": "country name",
-      "position": "one-line summary of position (max 20 words)",
-      "key_quotes": ["direct quote 1", "direct quote 2"],
-      "stance": "supportive|opposed|neutral|cautious",
-      "source_url": "primary URL or null",
-      "source_date": "YYYY-MM-DD or null",
-      "speaker": "Name and Title or null",
-      "credibility_score": 5
+      "topic": "トピック名（日本語）",
+      "summary": "トピックの概要（日本語、2〜3文）",
+      "countries": [
+        {{
+          "country": "国名（日本語）",
+          "position": "立場の一行要約（日本語、最大30文字）",
+          "key_quotes": ["主要な引用（原文の言語のまま）"],
+          "stance": "supportive|opposed|neutral|cautious",
+          "speaker": "発言者の氏名と肩書き または null",
+          "source_date": "YYYY-MM-DD または null"
+        }}
+      ],
+      "analysis": {{
+        "consensus_points": ["合意点（日本語）"],
+        "divergence_points": ["相違点（日本語）"]
+      }}
     }}
   ],
-  "analysis": {{
-    "consensus_points": ["point 1"],
-    "divergence_points": ["point 1"],
-    "notable_absences": ["country that has not commented"],
-    "summary": "2-3 sentence overall summary of global response"
+  "overall_analysis": {{
+    "summary": "全トピックを通した国際情勢の全体的な要約（日本語、3〜4文）",
+    "notable_absences": ["声明を出していない注目国（日本語）"]
   }}
 }}
+
+重要:
+- briefing_sections はトピックごとに1つのエントリを作成すること
+- 各トピック内に複数国の反応を countries 配列で格納すること
+- __backup_osint__ や __backup_headlines__ のデータも参考にして情報を補完すること
+- 分析テキストはすべて日本語で記述すること
 """
 
     for attempt in range(1, max_retries + 1):
-        logger.info(f"Generating structured summary (attempt {attempt}/{max_retries})...")
+        logger.info(f"構造化要約を生成中（試行 {attempt}/{max_retries}）...")
         try:
             response = client.models.generate_content(
                 model="gemini-2.5-flash-lite",
@@ -116,60 +133,44 @@ Output ONLY valid JSON (no markdown fences, no preamble) with this exact schema:
             briefing_data = json.loads(text)
             _merge_urls(briefing_data, url_map)
 
-            logger.info("Structured summary generated successfully.")
+            logger.info("構造化要約の生成が完了しました。")
             return briefing_data
 
         except json.JSONDecodeError as e:
-            logger.warning(f"JSON parse failed (attempt {attempt}): {e}")
+            logger.warning(f"JSONパース失敗（試行{attempt}）: {e}")
             if attempt == max_retries:
-                logger.error("Max retries reached. Returning minimal fallback structure.")
-                return _fallback_structure(topic, raw_statements, url_map)
+                logger.error("最大リトライ回数に達しました。フォールバック構造を返します。")
+                return _fallback_structure(topics, raw_statements, url_map)
 
         except Exception as e:
-            logger.error(f"Unexpected error on attempt {attempt}: {e}")
+            logger.error(f"予期しないエラー（試行{attempt}）: {e}")
             if attempt == max_retries:
-                return _fallback_structure(topic, raw_statements, url_map)
+                return _fallback_structure(topics, raw_statements, url_map)
 
 
 def _merge_urls(briefing_data: dict, url_map: dict) -> None:
-    """
-    url_mapの情報をbriefing_sectionsの各エントリにマージする。
-    source_url が null の場合に url_map の最初のURLで補完する。
-    また source_urls（複数）フィールドを追加する。
-    """
+    """url_mapの情報をbriefing_sectionsにマージする。"""
     for section in briefing_data.get("briefing_sections", []):
-        country = section.get("country", "")
-        urls = url_map.get(country, [])
-
-        if not section.get("source_url") and urls:
-            section["source_url"] = urls[0]
-
+        topic = section.get("topic", "")
+        urls = url_map.get(topic, [])
         section["source_urls"] = urls
 
 
-def _fallback_structure(topic: dict, raw_statements: dict, url_map: dict) -> dict:
-    """JSON生成が完全に失敗した場合のフォールバック構造"""
+def _fallback_structure(topics: list[dict], raw_statements: dict, url_map: dict) -> dict:
     return {
-        "topic": topic["title"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "briefing_sections": [
             {
-                "country": country,
-                "position": "Statement collected but structured parsing failed.",
-                "key_quotes": [],
-                "stance": "neutral",
-                "source_url": url_map.get(country, [None])[0],
-                "source_urls": url_map.get(country, []),
-                "source_date": None,
-                "speaker": None,
-                "credibility_score": 3,
+                "topic": t["title"],
+                "summary": "構造化パースに失敗しました。",
+                "countries": [],
+                "analysis": {"consensus_points": [], "divergence_points": []},
+                "source_urls": url_map.get(t["title"], []),
             }
-            for country in raw_statements.keys()
+            for t in topics
         ],
-        "analysis": {
-            "consensus_points": [],
-            "divergence_points": [],
+        "overall_analysis": {
+            "summary": "構造化要約の生成に失敗しました。",
             "notable_absences": [],
-            "summary": "Structured summary generation failed.",
         },
     }

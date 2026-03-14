@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>StoryWire Ticker</title>
+<style>
+  /* ── リセット・全体 ── */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+    font-family: 'Noto Sans JP', 'Yu Gothic UI', 'Segoe UI', sans-serif;
+  }
+
+  /* ── ティッカーバー（画面下部）── 常に同じ見た目 ── */
+  #ticker-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 1920px;
+    height: 72px;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    background: rgba(20, 20, 30, 0.88);
+    border-top: 3px solid #3b82f6;
+    opacity: 0;
+    transform: translateY(72px);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+  }
+  #ticker-bar.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ── NEWS ラベル（左端） ── */
+  #now-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100px;
+    min-width: 100px;
+    height: 100%;
+    background: #3b82f6;
+    color: #fff;
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: 1px;
+    z-index: 10;
+  }
+
+  /* ── スクロール領域 ── */
+  #scroll-area {
+    flex: 1;
+    height: 100%;
+    overflow: hidden;
+    position: relative;
+  }
+
+  #scroll-track {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    white-space: nowrap;
+    position: absolute;
+    left: 100%;
+    will-change: transform;
+  }
+
+  /* ── 通常ヘッドラインアイテム ── */
+  .headline-item {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 40px;
+    height: 100%;
+    font-size: 26px;
+    font-weight: 600;
+    color: #f0f0f0;
+    line-height: 1;
+  }
+  .headline-item .sep {
+    color: #3b82f6;
+    margin: 0 24px;
+    font-size: 16px;
+  }
+  .headline-item .source {
+    font-size: 16px;
+    font-weight: 400;
+    color: #94a3b8;
+    margin-left: 12px;
+  }
+
+  /* ── 速報アイテム：赤背景 + 黄色文字で目立たせる ── */
+  .headline-item.breaking-item {
+    background: rgba(200, 10, 10, 0.90);
+    border-radius: 4px;
+    margin: 6px 4px;
+    padding: 0 28px;
+    color: #fef08a;
+    font-weight: 800;
+  }
+  .headline-item.breaking-item .breaking-tag {
+    display: inline-block;
+    background: #fbbf24;
+    color: #1a1a1a;
+    font-size: 13px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    margin-right: 12px;
+    vertical-align: middle;
+  }
+  .headline-item.breaking-item .source {
+    color: #fde68a;
+  }
+  .headline-item.breaking-item .sep {
+    color: #fbbf24;
+  }
+
+  /* ── 速報バナー（上部に初回のみ一時表示） ── */
+  #breaking-banner {
+    position: absolute;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-120px);
+    background: rgba(180, 10, 10, 0.95);
+    border: 2px solid #fbbf24;
+    border-radius: 4px;
+    padding: 16px 48px;
+    color: #fff;
+    font-size: 28px;
+    font-weight: 700;
+    text-align: center;
+    white-space: nowrap;
+    opacity: 0;
+    z-index: 200;
+    transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+                opacity 0.6s ease;
+    pointer-events: none;
+    max-width: 1600px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #breaking-banner .banner-label {
+    color: #fbbf24;
+    font-weight: 900;
+    letter-spacing: 2px;
+    margin-right: 16px;
+    font-size: 22px;
+  }
+  #breaking-banner.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+
+  /* ── 速報フラッシュ（初回のみの軽い全画面フラッシュ） ── */
+  #breaking-flash {
+    position: absolute;
+    top: 0; left: 0;
+    width: 1920px;
+    height: 1080px;
+    background: rgba(200, 0, 0, 0.12);
+    pointer-events: none;
+    opacity: 0;
+    z-index: 100;
+  }
+  #breaking-flash.active {
+    animation: flash-fade 1.2s ease-out forwards;
+  }
+  @keyframes flash-fade {
+    0%   { opacity: 1; }
+    100% { opacity: 0; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 速報時の画面フラッシュ（初回のみ） -->
+<div id="breaking-flash"></div>
+
+<!-- 速報バナー（上部に初回のみ一時表示） -->
+<div id="breaking-banner">
+  <span class="banner-label">🔴 BREAKING</span>
+  <span id="banner-text"></span>
+</div>
+
+<!-- ティッカーバー（常に同じ外観） -->
+<div id="ticker-bar">
+  <div id="now-label">NEWS</div>
+  <div id="scroll-area">
+    <div id="scroll-track"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // ── 設定 ──
+  const SSE_URL = `http://${location.host}/events`;
+  const SCROLL_SPEED = 120;              // px/sec
+  const BREAKING_BANNER_DURATION = 8000; // バナー表示時間(ms)
+  const RECONNECT_DELAY = 3000;
+
+  // ── DOM ──
+  const tickerBar      = document.getElementById('ticker-bar');
+  const scrollTrack    = document.getElementById('scroll-track');
+  const scrollArea     = document.getElementById('scroll-area');
+  const breakingFlash  = document.getElementById('breaking-flash');
+  const breakingBanner = document.getElementById('breaking-banner');
+  const bannerText     = document.getElementById('banner-text');
+
+  // ── 状態 ──
+  let currentData = null;
+  let animationId = null;
+  let bannerTimer = null;
+
+  // 速報IDの既読管理 — バナー/フラッシュは初回のみ発動
+  const shownBreakingIds = new Set();
+
+  // ── ティッカーバーを表示 ──
+  function showTicker() {
+    tickerBar.classList.add('visible');
+  }
+
+  // ── ヘッドラインDOM生成 ──
+  // 速報アイテムは通常ニュースに混ざって表示される（赤背景で強調）
+  function buildHeadlines(data) {
+    scrollTrack.innerHTML = '';
+
+    const items = data.headlines || [];
+    if (items.length === 0) return;
+
+    // 2周分のアイテムを生成（ループ用）
+    for (let repeat = 0; repeat < 2; repeat++) {
+      items.forEach((item, i) => {
+        const el = document.createElement('span');
+        el.className = 'headline-item';
+
+        const isBreaking = item.is_breaking;
+        if (isBreaking) el.classList.add('breaking-item');
+
+        let html = '';
+        // セパレータ（先頭以外）
+        if (i > 0 || repeat > 0) {
+          html += '<span class="sep">◆</span>';
+        }
+        // 速報タグ
+        if (isBreaking) {
+          html += '<span class="breaking-tag">BREAKING</span>';
+        }
+        // タイトル
+        html += escapeHtml(item.title || '');
+        // ソース
+        if (item.source) {
+          html += `<span class="source">${escapeHtml(item.source)}</span>`;
+        }
+        el.innerHTML = html;
+        scrollTrack.appendChild(el);
+      });
+    }
+  }
+
+  // ── スクロールアニメーション ──
+  let scrollPos = 0;
+
+  function startScroll() {
+    if (animationId) cancelAnimationFrame(animationId);
+
+    const areaWidth = scrollArea.offsetWidth || 1820;
+    scrollPos = areaWidth;
+    let lastTime = performance.now();
+
+    function tick(now) {
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+
+      scrollPos -= SCROLL_SPEED * dt;
+
+      // 全体の半分をスクロールし終えたらリセット（ループ）
+      const halfWidth = scrollTrack.scrollWidth / 2;
+      if (halfWidth > 0 && scrollPos < -halfWidth) {
+        scrollPos += halfWidth;
+      }
+
+      scrollTrack.style.transform = `translateX(${scrollPos}px)`;
+      animationId = requestAnimationFrame(tick);
+    }
+
+    animationId = requestAnimationFrame(tick);
+  }
+
+  // ── 速報の初回演出（バナー＋フラッシュ） ──
+  function handleBreakingFirstTime(breakingItems) {
+    if (!breakingItems || breakingItems.length === 0) return;
+
+    // まだバナーを出していない速報を探す
+    const unseenBreaking = breakingItems.filter(b => !shownBreakingIds.has(b.id));
+    if (unseenBreaking.length === 0) return;
+
+    // 既読に記録
+    unseenBreaking.forEach(b => shownBreakingIds.add(b.id));
+
+    // 最も重要な未表示速報でバナーを出す
+    const top = unseenBreaking[0];
+
+    // フラッシュ
+    breakingFlash.classList.remove('active');
+    void breakingFlash.offsetWidth;  // reflow
+    breakingFlash.classList.add('active');
+
+    // バナー表示
+    bannerText.textContent = top.title || '';
+    breakingBanner.classList.add('show');
+
+    if (bannerTimer) clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(() => {
+      breakingBanner.classList.remove('show');
+    }, BREAKING_BANNER_DURATION);
+  }
+
+  // ── データ更新ハンドラ ──
+  function handleUpdate(data) {
+    currentData = data;
+
+    // 速報があれば初回のみバナー演出
+    if (data.has_breaking && data.breaking && data.breaking.length > 0) {
+      handleBreakingFirstTime(data.breaking);
+    }
+
+    // ヘッドライン再構築（速報は通常ニュースに混ざる）
+    buildHeadlines(data);
+    showTicker();
+    startScroll();
+  }
+
+  // ── SSE 接続 ──
+  function connectSSE() {
+    const es = new EventSource(SSE_URL);
+
+    es.addEventListener('ticker', (e) => {
+      try { handleUpdate(JSON.parse(e.data)); }
+      catch (err) { console.error('[Ticker] parse error:', err); }
+    });
+
+    es.addEventListener('breaking', (e) => {
+      try { handleUpdate(JSON.parse(e.data)); }
+      catch (err) { console.error('[Ticker] parse error:', err); }
+    });
+
+    es.onerror = () => {
+      console.warn('[Ticker] SSE error, reconnecting...');
+      es.close();
+      setTimeout(connectSSE, RECONNECT_DELAY);
+    };
+  }
+
+  // ── ユーティリティ ──
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  // ── 起動 ──
+  connectSSE();
+
+})();
+</script>
+</body>
+</html>

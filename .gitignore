@@ -16,3 +16,6 @@ work
 *.json
 youtube_client_secrets.json
 youtube_token.json
+output
+data
+

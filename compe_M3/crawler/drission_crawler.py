@@ -38,7 +38,7 @@ NEWS_PATH_KEYWORDS = [
 def _make_chromium_options() -> ChromiumOptions:
     """ヘッドレスChromiumの起動オプションを生成する"""
     co = ChromiumOptions()
-    #co.headless()                              # ヘッドレスモード
+    co.headless()                              # ヘッドレスモード
     co.set_argument("--no-sandbox")
     co.set_argument("--disable-dev-shm-usage")
     co.set_argument("--disable-gpu")

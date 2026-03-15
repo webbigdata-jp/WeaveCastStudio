@@ -117,7 +117,7 @@ def generate_structured_summary(
         logger.info(f"構造化要約を生成中（試行 {attempt}/{max_retries}）...")
         try:
             response = client.models.generate_content(
-                model="gemini-2.5-flash-lite",
+                model="gemini-2.5-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_modalities=["TEXT"],

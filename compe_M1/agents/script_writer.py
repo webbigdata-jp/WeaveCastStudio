@@ -77,7 +77,7 @@ def generate_briefing_script(client: genai.Client, briefing_data: dict) -> str:
 
     logger.info("全体ブリーフィング原稿を生成中...")
     response = client.models.generate_content(
-        model="gemini-2.5-flash-lite",
+        model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(response_modalities=["TEXT"]),
     )

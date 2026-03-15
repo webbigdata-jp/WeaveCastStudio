@@ -19,6 +19,8 @@ from google.genai import types
 logger = logging.getLogger(__name__)
 
 IMAGE_MODEL = "gemini-3.1-flash-image-preview"
+IMAGE_MODEL = "gemini-3-pro-image-preview"
+
 PLACEHOLDER_BG_COLOR = (15, 30, 60)
 
 
@@ -382,41 +384,54 @@ def _build_briefing_image_prompt(
     if image_type == "MAP":
         # 関連する国名をラベルとして抽出
         country_names = [c.get("country", "") for c in countries if c.get("country")]
-        labels = ", ".join(country_names[:6]) if country_names else "関係国"
+        labels_list = "\n".join(f"  - {name}" for name in country_names[:6])
         prompt = (
             f"報道番組風の地図グラフィックを生成してください。\n"
-            f"トピック: {topic_title}\n"
-            f"概要: {summary}\n\n"
-            f"地図の要件:\n"
-            f"- シンプルな模式図（国境線と海岸線のみ）\n"
-            f"- 関連地域を赤またはオレンジでハイライト\n"
-            f"- 矢印やマーカーで重要ポイントを表示\n"
-            f"- 国名ラベル: {labels}（地図上の国名は英語表記）\n"
-            f"- 地図上に人物・車両・建物は描かない\n"
-            f"- 数値や統計は追加しない\n"
+            f"タイトル: 「{topic_title}」（画像上部に日本語で大きく表示）\n\n"
+            f"【描画する要素（これだけを描くこと）】\n"
+            f"1. シンプルな模式地図（国境線と海岸線のみ）\n"
+            f"2. 関連地域（トピックの中心地）を赤またはオレンジでハイライト\n"
+            f"3. 以下の国名ラベルのみ表示（日本語）:\n{labels_list}\n"
+            f"4. トピックの中心地点に赤い丸マーカーを1つ配置\n\n"
+            f"【絶対に描かないこと】\n"
+            f"- 矢印（国と国を結ぶ矢印、攻撃を示す矢印などすべて禁止）\n"
+            f"- 「STRANDED SHIPS」「OIL PRICES」など追加テキスト\n"
+            f"- 船舶、軍艦、飛行機などのアイコン\n"
+            f"- プロンプトに書かれていないラベルや情報\n"
+            f"- 数値、統計、価格情報\n"
         )
 
     elif image_type == "STANCE":
-        # 各国の立場を整理
-        stance_lines = []
+        # 各国の立場を整理（矢印なしのグリッドレイアウト用）
+        stance_entries = []
         for c in countries[:6]:
             name = c.get("country", "?")
             position = c.get("position", "")
             stance = c.get("stance", "neutral")
-            stance_lines.append(f"  - {name}: {position}（{stance}）")
-        stances_text = "\n".join(stance_lines) if stance_lines else "  情報なし"
+            # stance → 色指定
+            color_map = {
+                "supportive": "青", "opposed": "赤",
+                "neutral": "灰色", "cautious": "黄色",
+            }
+            color = color_map.get(stance, "灰色")
+            stance_entries.append(f"  - {name}（{color}の丸）: 「{position}」")
+        stances_text = "\n".join(stance_entries) if stance_entries else "  情報なし"
 
         prompt = (
             f"報道番組風の各国立場対比図を生成してください。\n"
-            f"トピック: {topic_title}\n"
-            f"概要: {summary}\n\n"
-            f"各国の立場:\n{stances_text}\n\n"
-            f"対比図の要件:\n"
-            f"- 各国を丸または四角のノードで表現\n"
-            f"- 色分け: 賛成=青、反対=赤、中立=灰色、慎重=黄色\n"
-            f"- ノード間の関係を矢印や線で表示\n"
-            f"- 各ノードに国名と立場の一言要約を日本語で表示\n"
-            f"- プロンプトに記載された情報のみ使用すること\n"
+            f"タイトル: 「{topic_title}」（画像上部に日本語で大きく表示）\n\n"
+            f"【描画する要素（これだけを描くこと）】\n"
+            f"以下の各国を丸いノードで表現し、それぞれの立場を日本語テキストで表示:\n"
+            f"{stances_text}\n\n"
+            f"【レイアウト】\n"
+            f"- 各国のノードを横並びまたは格子状に配置\n"
+            f"- 各ノードの下にその国の立場テキストを表示\n"
+            f"- トピック名を中央上部にタイトルとして配置\n\n"
+            f"【絶対に描かないこと】\n"
+            f"- 国と国を結ぶ矢印（矢印は一切使わない）\n"
+            f"- 国旗の描写（シンプルな丸ノードのみ）\n"
+            f"- プロンプトに書かれていない国や情報\n"
+            f"- 数値、統計、引用文\n"
         )
 
     elif image_type == "VERSUS":
@@ -425,16 +440,19 @@ def _build_briefing_image_prompt(
         c2 = countries[1] if len(countries) > 1 else {"country": "B国", "position": ""}
         prompt = (
             f"報道番組風の二者対比グラフィックを生成してください。\n"
-            f"トピック: {topic_title}\n"
-            f"概要: {summary}\n\n"
-            f"対比:\n"
-            f"  左側: {c1.get('country', 'A国')} — {c1.get('position', '')}\n"
-            f"  右側: {c2.get('country', 'B国')} — {c2.get('position', '')}\n\n"
-            f"対比図の要件:\n"
-            f"- 左右に分けたレイアウト（中央に区切り線）\n"
-            f"- 各側に国名と要点を日本語で表示\n"
-            f"- 対立する立場を赤と青で色分け\n"
-            f"- プロンプトに記載された情報のみ使用すること\n"
+            f"タイトル: 「{topic_title}」（画像上部に日本語で大きく表示）\n\n"
+            f"【描画する要素（これだけを描くこと）】\n"
+            f"左側（赤）: {c1.get('country', 'A国')}\n"
+            f"  立場: 「{c1.get('position', '')}」\n"
+            f"右側（青）: {c2.get('country', 'B国')}\n"
+            f"  立場: 「{c2.get('position', '')}」\n\n"
+            f"【レイアウト】\n"
+            f"- 左右に分けたレイアウト（中央に VS の文字と区切り線）\n"
+            f"- 各側に国名と立場テキストを日本語で表示\n\n"
+            f"【絶対に描かないこと】\n"
+            f"- 国と国を結ぶ矢印\n"
+            f"- 国旗の写実的描写\n"
+            f"- プロンプトに書かれていない情報\n"
         )
 
     elif image_type == "KEYPOINTS":
@@ -444,33 +462,36 @@ def _build_briefing_image_prompt(
         consensus = analysis.get("consensus_points", [])
         divergence = analysis.get("divergence_points", [])
         for p in consensus[:2]:
-            points.append(f"  - {p}")
+            points.append(f"  {len(points)+1}. {p}")
         for p in divergence[:2]:
-            points.append(f"  - {p}")
+            points.append(f"  {len(points)+1}. {p}")
         # 不足なら各国の position から補完
         if len(points) < 3:
             for c in countries[:3]:
-                points.append(f"  - {c.get('country', '')}: {c.get('position', '')}")
+                points.append(f"  {len(points)+1}. {c.get('country', '')}: {c.get('position', '')}")
         points_text = "\n".join(points[:5]) if points else "  情報なし"
 
         prompt = (
             f"報道番組風のキーポイント要約グラフィックを生成してください。\n"
-            f"トピック: {topic_title}\n"
-            f"概要: {summary}\n\n"
-            f"要点:\n{points_text}\n\n"
-            f"要約グラフィックの要件:\n"
-            f"- 番号付きリストまたはアイコン付きレイアウト\n"
-            f"- 各ポイントにシンプルな幾何学アイコンとテキスト\n"
-            f"- テキストは日本語\n"
-            f"- プロンプトに記載された情報のみ使用すること（数値を捏造しない）\n"
+            f"タイトル: 「{topic_title}」（画像上部に日本語で大きく表示）\n\n"
+            f"【描画する要素（これだけを描くこと）】\n"
+            f"以下の要点を番号付きリストで表示:\n{points_text}\n\n"
+            f"【レイアウト】\n"
+            f"- 各ポイントにシンプルな幾何学アイコン（丸、四角など）とテキスト\n"
+            f"- テキストは日本語\n\n"
+            f"【絶対に描かないこと】\n"
+            f"- プロンプトに書かれていない要点やデータの追加\n"
+            f"- 矢印や関係線\n"
+            f"- 写実的なイラスト\n"
+            f"- 数値・統計の捏造\n"
         )
 
     else:
         prompt = (
             f"報道番組風の要約グラフィックを生成してください。\n"
-            f"トピック: {topic_title}\n"
-            f"概要: {summary}\n"
+            f"タイトル: 「{topic_title}」（画像上部に日本語で大きく表示）\n"
             f"抽象的なアイコンと日本語テキストのみで構成すること。\n"
+            f"プロンプトに書かれていない情報は追加しないこと。\n"
         )
 
     return prompt + _COMMON_STYLE_JA

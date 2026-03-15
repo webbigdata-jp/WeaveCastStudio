@@ -37,11 +37,11 @@ _HERE = Path(__file__).resolve().parent
 # ウィンドウサイズ
 WINDOW_WIDTH = 1920
 WINDOW_HEIGHT = 1080
-WINDOW_TITLE = "StoryWire Media"
+WINDOW_TITLE = "WeaveCast Media"
 
 # 静止画アセット設定ファイル
 ASSETS_JSON = _HERE / "media_assets.json"
-IMAGES_DIR = _HERE / "images"
+IMAGES_DIR = _HERE / "assets"
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -88,7 +88,7 @@ class ImageAssetManager:
                 local.parent.mkdir(parents=True, exist_ok=True)
                 logger.info(f"ダウンロード中: {asset['id']} ← {url}")
                 req = urllib.request.Request(url, headers={
-                    "User-Agent": "StoryWire/1.0 (media asset downloader)"
+                    "User-Agent": "WeaveCast/1.0 (media asset downloader)"
                 })
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     local.write_bytes(resp.read())
@@ -247,7 +247,6 @@ class MediaWindow:
         """canvas を非表示にして video_frame を前面に出す。"""
         self._canvas.place_forget()
         self._video_frame.place(x=0, y=0, width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
-        self._video_frame.lift()
 
     def swap_video(self, video_path: str) -> bool:
         """再生中に別の動画へ切り替える。"""
@@ -287,10 +286,9 @@ class MediaWindow:
             # ウィンドウサイズにフィットさせる（アスペクト比維持）
             img.thumbnail((WINDOW_WIDTH, WINDOW_HEIGHT), Image.Resampling.LANCZOS)
 
-            # Canvas を前面に出す
+            # Canvas を前面に出す（place_forget→place で後から配置した方が前面に来る）
             self._video_frame.place_forget()
             self._canvas.place(x=0, y=0, width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
-            self._canvas.lift()
 
             self._tk_image = ImageTk.PhotoImage(img)
             self._canvas.delete("all")

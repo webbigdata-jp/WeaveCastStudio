@@ -55,6 +55,7 @@ def make_entry(
     content_type: str,                  # "video" | "screenshot" | "image"
     title: str,
     topic_tags: list[str],
+    description: str | None = None,
     created_at: str | None = None,
     source_id: str | None = None,       # M3のsources.yaml id
     source_name: str | None = None,
@@ -78,6 +79,7 @@ def make_entry(
         content_type: "video" | "screenshot" | "image"
         title: コンテンツのタイトル
         topic_tags: 検索用タグリスト
+        description: コンテンツの概要・要約テキスト（M4がコンテキストを把握するため）
         created_at: ISO8601文字列。None の場合は現在時刻
         source_id: M3 sources.yaml の id（M1の場合は None）
         source_name: ソース表示名
@@ -120,6 +122,7 @@ def make_entry(
         "module": module,
         "type": content_type,
         "title": title,
+        "description": description,
         "topic_tags": topic_tags,
         "source_id": source_id,
         "source_name": source_name,

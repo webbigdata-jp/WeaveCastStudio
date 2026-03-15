@@ -501,6 +501,12 @@ class GeminiLiveClient:
         self._session = None
         self._running = False
 
+        # ── セッション再接続用 ──
+        self._resumption_handle: str | None = None   # Session Resumption ハンドル
+        self._session_lost = asyncio.Event()          # セッション切断通知
+        self._max_reconnect_attempts = 5
+        self._reconnecting = False                    # 再接続中フラグ
+
     def _build_config(self) -> dict:
         return {
             "response_modalities": ["AUDIO"],
@@ -512,6 +518,13 @@ class GeminiLiveClient:
             ),
             "input_audio_transcription": {},
             "output_audio_transcription": {},
+            # ── セッション維持用 ──
+            "session_resumption": types.SessionResumptionConfig(
+                handle=self._resumption_handle,
+            ),
+            "context_window_compression": types.ContextWindowCompressionConfig(
+                sliding_window=types.SlidingWindow(),
+            ),
         }
 
     async def _task_ptt_mic(self):
@@ -541,16 +554,23 @@ class GeminiLiveClient:
                         print("⏹  送信停止。Gemini が処理中...\n")
                         silence_chunks_left = 30
 
-                    if self._session:
+                    # セッション切断中は送信しない
+                    if self._session and not self._reconnecting:
                         if is_pressed:
-                            await self._session.send_realtime_input(
-                                audio=types.Blob(data=data, mime_type=f"audio/pcm;rate={SEND_RATE}")
-                            )
+                            try:
+                                await self._session.send_realtime_input(
+                                    audio=types.Blob(data=data, mime_type=f"audio/pcm;rate={SEND_RATE}")
+                                )
+                            except Exception:
+                                pass  # 切断直後の送信エラーは無視
                         elif silence_chunks_left > 0:
-                            silence_data = b'\x00' * len(data)
-                            await self._session.send_realtime_input(
-                                audio=types.Blob(data=silence_data, mime_type=f"audio/pcm;rate={SEND_RATE}")
-                            )
+                            try:
+                                silence_data = b'\x00' * len(data)
+                                await self._session.send_realtime_input(
+                                    audio=types.Blob(data=silence_data, mime_type=f"audio/pcm;rate={SEND_RATE}")
+                                )
+                            except Exception:
+                                pass
                             silence_chunks_left -= 1
 
                     was_pressed = is_pressed
@@ -565,6 +585,22 @@ class GeminiLiveClient:
         while self._running:
             try:
                 async for response in self._session.receive():
+                    # ── Session Resumption ハンドルの保持 ──
+                    if response.session_resumption_update:
+                        update = response.session_resumption_update
+                        if update.resumable and update.new_handle:
+                            self._resumption_handle = update.new_handle
+                            logger.debug(
+                                f"[Session] resumption handle 更新: "
+                                f"{self._resumption_handle[:20]}..."
+                            )
+                    # ── GoAway メッセージ（まもなく切断） ──
+                    if response.go_away is not None:
+                        logger.warning(
+                            f"[Session] GoAway 受信 — 残り時間: "
+                            f"{response.go_away.time_left}"
+                        )
+                        print("⚠️  サーバーからまもなく切断されます。自動再接続します...")
                     if response.data is not None:
                         await self._audio_out_queue.put(response.data)
                     if response.text:
@@ -586,7 +622,9 @@ class GeminiLiveClient:
                 if not self._running:
                     break
                 logger.warning(f"[RECV] receive() で例外: {type(e).__name__}: {e}")
-                await asyncio.sleep(0.1)
+                # セッション切断を通知して receive ループを抜ける
+                self._session_lost.set()
+                return  # run() 側で再接続を処理する
 
     async def _handle_tool_call(self, tool_call):
             try:
@@ -626,50 +664,129 @@ class GeminiLiveClient:
             stream.close()
 
     async def run(self):
-        config = self._build_config()
-        logger.info(f"Gemini Live API に接続中... (model={MODEL})")
-        async with self._client.aio.live.connect(model=MODEL, config=config) as session:
-            self._session = session
-            self._running = True
-            print("\n" + "═" * 55)
-            print("  StoryWire M4 - Gemini Live PTT モード")
-            print("═" * 55)
-            print(f"  記事: {len(self._today_titles)} 件 / 動画: {len(self._content_list)} 件")
-            print(f"  静止画アセット: {len(self._image_asset_mgr.list_all())} 件")
-            print(f"  {PTT_KEY.upper()} を押しながら話しかけてください")
-            print("  F5=再生/停止トグル F6=停止 F7=最小化 F8=復元")
-            print("  Ctrl+C で終了")
-            print("═" * 55)
-            if self._content_list:
-                print("\n【再生可能なコンテンツ一覧】")
-                for v in self._content_list:
-                    tags = ", ".join(v["topic_tags"]) if v["topic_tags"] else "-"
-                    mt = v.get("media_type", "?")
+        self._running = True
+
+        # ── 初回接続・情報表示 ──
+        print("\n" + "═" * 55)
+        print("  StoryWire M4 - Gemini Live PTT モード")
+        print("═" * 55)
+        print(f"  記事: {len(self._today_titles)} 件 / 動画: {len(self._content_list)} 件")
+        print(f"  静止画アセット: {len(self._image_asset_mgr.list_all())} 件")
+        print(f"  {PTT_KEY.upper()} を押しながら話しかけてください")
+        print("  F5=再生/停止トグル F6=停止 F7=最小化 F8=復元")
+        print("  Ctrl+C で終了")
+        print("═" * 55)
+        if self._content_list:
+            print("\n【再生可能なコンテンツ一覧】")
+            for v in self._content_list:
+                tags = ", ".join(v["topic_tags"]) if v["topic_tags"] else "-"
+                mt = v.get("media_type", "?")
+                print(
+                    f"  [{v['content_id']}] [{v['type']}|{mt}] {v['title']}"
+                    f" (score={v['score']:.1f}, tags={tags})"
+                )
+        else:
+            print("\n【再生可能なコンテンツ一覧】\n  （なし）")
+
+        image_assets = self._image_asset_mgr.list_all()
+        if image_assets:
+            print("\n【静止画アセット】")
+            for a in image_assets:
+                tags = ", ".join(a.get("topic_tags", []))
+                print(f"  [{a['id']}] {a['title']} (tags={tags})")
+        print()
+
+        # ── mic / speaker タスク（セッション跨ぎで生存） ──
+        mic_task = asyncio.create_task(self._task_ptt_mic())
+        speaker_task = asyncio.create_task(self._task_play_audio())
+
+        consecutive_failures = 0
+
+        try:
+            while self._running:
+                # ── セッション接続 ──
+                config = self._build_config()
+                handle_info = (
+                    f" (resumption handle あり)"
+                    if self._resumption_handle else " (新規セッション)"
+                )
+                logger.info(
+                    f"Gemini Live API に接続中... (model={MODEL}){handle_info}"
+                )
+                if consecutive_failures > 0:
                     print(
-                        f"  [{v['content_id']}] [{v['type']}|{mt}] {v['title']}"
-                        f" (score={v['score']:.1f}, tags={tags})"
+                        f"🔄 再接続中... "
+                        f"(試行 {consecutive_failures}/{self._max_reconnect_attempts})"
                     )
-            else:
-                print("\n【再生可能なコンテンツ一覧】\n  （なし）")
 
-            image_assets = self._image_asset_mgr.list_all()
-            if image_assets:
-                print("\n【静止画アセット】")
-                for a in image_assets:
-                    tags = ", ".join(a.get("topic_tags", []))
-                    print(f"  [{a['id']}] {a['title']} (tags={tags})")
+                try:
+                    async with self._client.aio.live.connect(
+                        model=MODEL, config=config,
+                    ) as session:
+                        self._session = session
+                        self._reconnecting = False
+                        self._session_lost.clear()
+                        consecutive_failures = 0  # 接続成功でリセット
 
-            print()
-            try:
-                async with asyncio.TaskGroup() as tg:
-                    tg.create_task(self._task_ptt_mic())
-                    tg.create_task(self._task_receive())
-                    tg.create_task(self._task_play_audio())
-            except* KeyboardInterrupt:
-                pass
-            finally:
-                self._running = False
-                logger.info("セッション終了")
+                        if self._resumption_handle:
+                            print("✅ セッション再接続成功（会話コンテキスト復元）")
+                        else:
+                            print("✅ セッション接続成功")
+                        print("─── (F9 で話しかけてください) ───\n")
+
+                        # receive タスクを起動し、切断を待つ
+                        recv_task = asyncio.create_task(self._task_receive())
+                        try:
+                            # session_lost が set されるか、recv_task が終了するまで待つ
+                            await self._session_lost.wait()
+                        finally:
+                            recv_task.cancel()
+                            try:
+                                await recv_task
+                            except asyncio.CancelledError:
+                                pass
+
+                except Exception as e:
+                    logger.error(
+                        f"[Session] 接続/セッションエラー: {type(e).__name__}: {e}"
+                    )
+
+                if not self._running:
+                    break
+
+                # ── 再接続バックオフ ──
+                consecutive_failures += 1
+                self._reconnecting = True
+                self._session = None
+
+                if consecutive_failures >= self._max_reconnect_attempts:
+                    logger.error(
+                        f"[Session] 再接続 {self._max_reconnect_attempts} 回失敗。"
+                        f"終了します。"
+                    )
+                    print(
+                        f"❌ 再接続に {self._max_reconnect_attempts} 回失敗しました。"
+                        f"終了します。"
+                    )
+                    break
+
+                delay = min(2 ** consecutive_failures, 30)
+                logger.info(f"[Session] {delay} 秒後に再接続します...")
+                print(f"⏳ {delay} 秒後に再接続します...")
+                await asyncio.sleep(delay)
+
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self._running = False
+            mic_task.cancel()
+            speaker_task.cancel()
+            for t in (mic_task, speaker_task):
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+            logger.info("セッション終了")
 
     def close(self):
         self._running = False

@@ -283,8 +283,12 @@ class MediaWindow:
         """tkinter スレッド上で画像を Canvas に描画する。"""
         try:
             img = Image.open(image_path)
-            # ウィンドウサイズにフィットさせる（アスペクト比維持）
-            img.thumbnail((WINDOW_WIDTH, WINDOW_HEIGHT), Image.Resampling.LANCZOS)
+            # ウィンドウサイズにフィットさせる（アスペクト比維持・拡大も行う）
+            img_w, img_h = img.size
+            scale = min(WINDOW_WIDTH / img_w, WINDOW_HEIGHT / img_h)
+            new_w = int(img_w * scale)
+            new_h = int(img_h * scale)
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
             # Canvas を前面に出す（place_forget→place で後から配置した方が前面に来る）
             self._video_frame.place_forget()

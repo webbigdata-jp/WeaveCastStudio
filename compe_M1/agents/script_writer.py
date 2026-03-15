@@ -49,7 +49,7 @@ def generate_briefing_script(client: genai.Client, briefing_data: dict) -> str:
         client: 初期化済みの genai.Client
         briefing_data: STEP 3で生成した構造化データ
     Returns:
-        [IMAGE: ...] マーカー付きの日本語原稿テキスト
+        日本語ナレーション原稿テキスト
     """
     prompt = f"""以下の構造化データに基づいて、3〜5分の日本語ニュースブリーフィング原稿を出力せよ。
 
@@ -58,6 +58,7 @@ def generate_briefing_script(client: genai.Client, briefing_data: dict) -> str:
 - 「はい、承知しました」等の応答文は絶対に含めないこと。
 - Markdownの見出し（#, **, --- 等）は使用しないこと。
 - 最初の文字からナレーション原稿が始まること。
+- [IMAGE: ...] のようなマーカーや指示は一切含めないこと。純粋なナレーション原稿のみ。
 
 データ:
 {json.dumps(briefing_data, indent=2, ensure_ascii=False)}
@@ -67,30 +68,12 @@ def generate_briefing_script(client: genai.Client, briefing_data: dict) -> str:
 2. 本文: 各トピックについて報告する
    - トピックごとに主要国の反応を2〜3文ずつ
    - 国際社会の見解の相違を際立たせる
+   - データに含まれていない情報は絶対に追加しないこと
 3. 締め: 今後の影響に関する簡潔な分析で締めくくる
 
 トーン: NHKワールドニュースのような落ち着いた報道トーン
-
-画像マーカー:
-- 段落間に [IMAGE: TYPE: description] マーカーを配置（description は英語）
-- 推奨配置: 冒頭後、各トピック間、締め近くに合計3〜5個
-- TYPE は以下の5種類のいずれか1つを必ず指定すること:
-  * MAP: 地理的な位置関係を示す場合 → [IMAGE: MAP: Strait of Hormuz region with Iran, UAE, Oman labeled]
-  * STANCE: 各国の立場を対比する場合 → [IMAGE: STANCE: US supports open navigation vs Iran restricts passage vs China calls for restraint]
-  * TIMELINE: 時系列で出来事を並べる場合 → [IMAGE: TIMELINE: Feb 25 blockade announced, Feb 28 school attack, Mar 1 UN response]
-  * VERSUS: 二者対比の場合 → [IMAGE: VERSUS: US position vs Iran position on airstrikes]
-  * KEYPOINTS: 要点をまとめる場合 → [IMAGE: KEYPOINTS: 1. Blockade scope 2. International reactions 3. Economic impact]
-
-- description に含めてよい情報: 国名、組織名、日付、原稿中に明記された事実のみ
-- 絶対に禁止（これらが含まれるマーカーは画像生成で無視される）:
-  * 人物の描写: "portrait", "photo", "image of people", "soldiers", "children", "person"
-  * 建物・物体の写実描写: "building", "school", "aircraft", "missile", "weapon", "destroyed", "damaged"
-  * 感情的表現: "crying", "caution tape", "warning", "explosion", "fire", "blood"
-  * "Image of ..." という書き出し（画像の直接描写は禁止）
-  * "Infographic" という単語（TYPEで種類を指定済みなので不要）
-
 文字数: 1200〜1800文字（日本語）
-言語: 本文は日本語。[IMAGE: ...] 内のみ英語。"""
+言語: 日本語"""
 
     logger.info("全体ブリーフィング原稿を生成中...")
     response = client.models.generate_content(

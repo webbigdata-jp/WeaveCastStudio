@@ -34,6 +34,7 @@ from agents.image_generator import (
     generate_title_slide,
     generate_news_lineup_image,
     generate_content_images,
+    generate_briefing_images,
     generate_clip_image,
 )
 from agents.narrator import generate_narration
@@ -178,7 +179,10 @@ def run_phase2(client: genai.Client, topics: list[dict], dirs: OutputDirs) -> No
     # 画像生成
     title_slide = generate_title_slide(client, topics, dirs.images, date_str)
     lineup_image = generate_news_lineup_image(client, topics, dirs.images, date_str)
-    content_slides = generate_content_images(client, full_script, dirs.images)
+    # briefing_dataからトピックごとに画像を生成（IMAGEマーカー不要）
+    content_slides = generate_briefing_images(
+        client, briefing_data, topics, dirs.images, date_str,
+    )
 
     # クリップ用画像
     clip_image_paths = []

@@ -294,8 +294,11 @@ def _build_content_image_prompt(desc: str) -> str:
 def generate_content_images(
     client: genai.Client, script_text: str, output_dir: Path,
 ) -> list[Path]:
-    """原稿内の [IMAGE: ...] マーカーから画像を生成する。"""
+    """[後方互換] 原稿内の [IMAGE: ...] マーカーから画像を生成する。"""
     markers = re.findall(r'\[IMAGE:\s*(.*?)\]', script_text)
+    if not markers:
+        logger.info("原稿中に画像マーカーなし（generate_briefing_images を使用してください）")
+        return []
     logger.info(f"原稿中に{len(markers)}個の画像マーカーを検出")
 
     generated = []
@@ -304,6 +307,215 @@ def generate_content_images(
         prompt = _build_content_image_prompt(desc)
         _generate_image(client, prompt, output_path, f"コンテンツ画像 {i+1}/{len(markers)}")
         generated.append(output_path)
+    return generated
+
+
+# ── 共通スタイル（日本語プロンプト版） ──
+
+_COMMON_STYLE_JA = (
+    "\n\n【共通スタイル要件】\n"
+    "- 背景: ダークネイビー (#0F1E3C)\n"
+    "- テキスト色: 白\n"
+    "- アスペクト比: 16:9\n"
+    "- 右下に小さく「WeaveCast」ウォーターマーク\n"
+    "- フラットデザイン・ダイアグラムスタイルのみ\n"
+    "- クリーンでモダンな報道番組風（NHK/BBC風）\n"
+    "\n【絶対禁止】\n"
+    "- 写実的な人物・顔・体・建物・車両・兵器の描写\n"
+    "- プロンプトに記載されていない数値・統計・パーセンテージの捏造\n"
+    "- 感情的・扇情的なイメージ\n"
+    "- 写真やフォトリアリスティックな描写\n"
+    "- 幾何学的図形・アイコン・矢印・テキストボックス・抽象シンボルのみ使用すること\n"
+)
+
+
+def _choose_image_type(topic: dict, section: dict) -> str:
+    """
+    トピックとセクションの内容から最適な画像タイプを選択する。
+    """
+    title = (section.get("topic", "") + " " + topic.get("title", "")).lower()
+    tags = [t.lower() for t in topic.get("tags", [])]
+    countries = section.get("countries", [])
+
+    # 地理的キーワード → MAP
+    geo_keywords = ["海峡", "hormuz", "封鎖", "blockade", "shipping", "地域", "region"]
+    if any(kw in title for kw in geo_keywords) or "shipping" in tags:
+        return "MAP"
+
+    # 軍事・損失系 → KEYPOINTS（STANCEより先に判定）
+    if any(kw in tags for kw in ["military", "damage", "war"]):
+        return "KEYPOINTS"
+
+    # 人道系 → KEYPOINTS（STANCEより先に判定）
+    if any(kw in tags for kw in ["humanitarian", "civilian"]):
+        return "KEYPOINTS"
+
+    # 対立構造が明確 → STANCE
+    if len(countries) >= 3:
+        stances = [c.get("stance", "") for c in countries]
+        if "opposed" in stances and "supportive" in stances:
+            return "STANCE"
+
+    # 政治・指導者系 → VERSUS or KEYPOINTS
+    if any(kw in tags for kw in ["politics", "leadership"]):
+        if len(countries) >= 2:
+            return "VERSUS"
+        return "KEYPOINTS"
+
+    # デフォルト: 国が多ければSTANCE、少なければKEYPOINTS
+    if len(countries) >= 3:
+        return "STANCE"
+    return "KEYPOINTS"
+
+
+def _build_briefing_image_prompt(
+    topic: dict, section: dict, image_type: str, date_str: str,
+) -> str:
+    """
+    briefing_dataのセクション情報から画像生成プロンプトを組み立てる。
+    """
+    topic_title = section.get("topic", topic.get("title", "ニュース"))
+    summary = section.get("summary", "")
+    countries = section.get("countries", [])
+    analysis = section.get("analysis", {})
+
+    if image_type == "MAP":
+        # 関連する国名をラベルとして抽出
+        country_names = [c.get("country", "") for c in countries if c.get("country")]
+        labels = ", ".join(country_names[:6]) if country_names else "関係国"
+        prompt = (
+            f"報道番組風の地図グラフィックを生成してください。\n"
+            f"トピック: {topic_title}\n"
+            f"概要: {summary}\n\n"
+            f"地図の要件:\n"
+            f"- シンプルな模式図（国境線と海岸線のみ）\n"
+            f"- 関連地域を赤またはオレンジでハイライト\n"
+            f"- 矢印やマーカーで重要ポイントを表示\n"
+            f"- 国名ラベル: {labels}（地図上の国名は英語表記）\n"
+            f"- 地図上に人物・車両・建物は描かない\n"
+            f"- 数値や統計は追加しない\n"
+        )
+
+    elif image_type == "STANCE":
+        # 各国の立場を整理
+        stance_lines = []
+        for c in countries[:6]:
+            name = c.get("country", "?")
+            position = c.get("position", "")
+            stance = c.get("stance", "neutral")
+            stance_lines.append(f"  - {name}: {position}（{stance}）")
+        stances_text = "\n".join(stance_lines) if stance_lines else "  情報なし"
+
+        prompt = (
+            f"報道番組風の各国立場対比図を生成してください。\n"
+            f"トピック: {topic_title}\n"
+            f"概要: {summary}\n\n"
+            f"各国の立場:\n{stances_text}\n\n"
+            f"対比図の要件:\n"
+            f"- 各国を丸または四角のノードで表現\n"
+            f"- 色分け: 賛成=青、反対=赤、中立=灰色、慎重=黄色\n"
+            f"- ノード間の関係を矢印や線で表示\n"
+            f"- 各ノードに国名と立場の一言要約を日本語で表示\n"
+            f"- プロンプトに記載された情報のみ使用すること\n"
+        )
+
+    elif image_type == "VERSUS":
+        # 2者対比（最初の2国）
+        c1 = countries[0] if len(countries) > 0 else {"country": "A国", "position": ""}
+        c2 = countries[1] if len(countries) > 1 else {"country": "B国", "position": ""}
+        prompt = (
+            f"報道番組風の二者対比グラフィックを生成してください。\n"
+            f"トピック: {topic_title}\n"
+            f"概要: {summary}\n\n"
+            f"対比:\n"
+            f"  左側: {c1.get('country', 'A国')} — {c1.get('position', '')}\n"
+            f"  右側: {c2.get('country', 'B国')} — {c2.get('position', '')}\n\n"
+            f"対比図の要件:\n"
+            f"- 左右に分けたレイアウト（中央に区切り線）\n"
+            f"- 各側に国名と要点を日本語で表示\n"
+            f"- 対立する立場を赤と青で色分け\n"
+            f"- プロンプトに記載された情報のみ使用すること\n"
+        )
+
+    elif image_type == "KEYPOINTS":
+        # 要点まとめ
+        points = []
+        # analysis から合意点・相違点を取得
+        consensus = analysis.get("consensus_points", [])
+        divergence = analysis.get("divergence_points", [])
+        for p in consensus[:2]:
+            points.append(f"  - {p}")
+        for p in divergence[:2]:
+            points.append(f"  - {p}")
+        # 不足なら各国の position から補完
+        if len(points) < 3:
+            for c in countries[:3]:
+                points.append(f"  - {c.get('country', '')}: {c.get('position', '')}")
+        points_text = "\n".join(points[:5]) if points else "  情報なし"
+
+        prompt = (
+            f"報道番組風のキーポイント要約グラフィックを生成してください。\n"
+            f"トピック: {topic_title}\n"
+            f"概要: {summary}\n\n"
+            f"要点:\n{points_text}\n\n"
+            f"要約グラフィックの要件:\n"
+            f"- 番号付きリストまたはアイコン付きレイアウト\n"
+            f"- 各ポイントにシンプルな幾何学アイコンとテキスト\n"
+            f"- テキストは日本語\n"
+            f"- プロンプトに記載された情報のみ使用すること（数値を捏造しない）\n"
+        )
+
+    else:
+        prompt = (
+            f"報道番組風の要約グラフィックを生成してください。\n"
+            f"トピック: {topic_title}\n"
+            f"概要: {summary}\n"
+            f"抽象的なアイコンと日本語テキストのみで構成すること。\n"
+        )
+
+    return prompt + _COMMON_STYLE_JA
+
+
+def generate_briefing_images(
+    client: genai.Client,
+    briefing_data: dict,
+    topics: list[dict],
+    output_dir: Path,
+    date_str: str,
+) -> list[Path]:
+    """
+    briefing_data（構造化JSON）からトピックごとに画像を生成する。
+
+    [IMAGE:] マーカーに依存せず、briefing_data の各セクションの
+    構造化情報（国名、立場、分析など）を直接使って画像プロンプトを組み立てる。
+
+    Args:
+        client: 初期化済みの genai.Client
+        briefing_data: STEP 3で生成した構造化データ
+        topics: topics.yaml のトピック定義リスト
+        output_dir: 画像保存先ディレクトリ
+        date_str: 日付文字列（例: "March 15, 2026"）
+    Returns:
+        生成した画像パスのリスト
+    """
+    sections = briefing_data.get("briefing_sections", [])
+    logger.info(f"briefing_dataから{len(sections)}セクションの画像を生成します")
+
+    generated = []
+    for i, section in enumerate(sections):
+        # 対応するtopics.yamlのトピック情報を取得
+        topic = topics[i] if i < len(topics) else {}
+
+        image_type = _choose_image_type(topic, section)
+        topic_title = section.get("topic", topic.get("title", f"トピック{i+1}"))
+        logger.info(f"  セクション{i+1}/{len(sections)} 「{topic_title}」 → {image_type}")
+
+        output_path = output_dir / f"slide_{i:03d}.png"
+        prompt = _build_briefing_image_prompt(topic, section, image_type, date_str)
+        _generate_image(client, prompt, output_path, f"ブリーフィング画像 {i+1}/{len(sections)} ({image_type})")
+        generated.append(output_path)
+
+    logger.info(f"ブリーフィング画像生成完了: {len(generated)}枚")
     return generated
 
 

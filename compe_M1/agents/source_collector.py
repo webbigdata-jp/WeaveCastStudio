@@ -23,6 +23,7 @@ from DrissionPage import ChromiumPage, ChromiumOptions
 
 logger = logging.getLogger(__name__)
 
+# デフォルトのスクリーンショット保存先（main.py から上書きされる想定）
 SCREENSHOT_DIR = Path(__file__).parent.parent / "output" / "screenshots"
 PAGE_LOAD_WAIT = 3.0
 PAGE_LOAD_WAIT_HEAVY_JS = 6.0

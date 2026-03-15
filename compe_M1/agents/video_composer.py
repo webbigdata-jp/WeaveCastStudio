@@ -156,15 +156,26 @@ def compose_video(
     content_slides: list[Path],
     audio_segments: list[Path],
     output_dir: Path,
+    output_video_path: Path | None = None,
+    merged_audio_path: Path | None = None,
 ) -> Path:
     """
     STEP 7のメインエントリポイント。
     音声結合 → 動画合成 を実行して完成MP4のパスを返す。
+
+    Args:
+        output_video_path: 動画の出力先パスを直接指定する場合。
+                           None の場合は output_dir/video/briefing.mp4
+        merged_audio_path: 結合音声の保存先パスを直接指定する場合。
+                           None の場合は output_dir/audio/full_narration.wav
     """
-    merged_audio_path = output_dir / "audio" / "full_narration.wav"
-    output_video_path = output_dir / "video" / "briefing.mp4"
+    if merged_audio_path is None:
+        merged_audio_path = output_dir / "audio" / "full_narration.wav"
+    if output_video_path is None:
+        output_video_path = output_dir / "video" / "briefing.mp4"
 
     # 出力ディレクトリ作成
+    merged_audio_path.parent.mkdir(parents=True, exist_ok=True)
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 音声結合

@@ -144,8 +144,9 @@ def run_phase1(client: genai.Client, config: dict, topics: list[dict], dirs: Out
     logger.info("フェーズ 1: 情報収集 + 構造化要約")
     logger.info("=" * 60)
 
-    # 全トピック一括収集
-    raw_statements = collect_all_topics(client, config)
+    # 全トピック一括収集（スクリーンショットはdata/screenshots/に保存）
+    screenshot_dir = dirs.data / "screenshots"
+    raw_statements = collect_all_topics(client, config, screenshot_dir=screenshot_dir)
     save_json(raw_statements, dirs.data / "raw_statements.json")
 
     # 構造化要約
@@ -260,6 +261,9 @@ def run_phase4(dirs: OutputDirs, topics: list[dict]) -> None:
     clip_audios = audio_manifest.get("clip_audios", [])
     clip_video_paths = []
 
+    clip_video_dir = dirs.video / "clips"
+    clip_video_dir.mkdir(parents=True, exist_ok=True)
+
     for i in range(len(clip_scripts)):
         if i >= len(clip_images) or i >= len(clip_audios):
             logger.warning(f"クリップ{i+1}: 画像または音声が不足。スキップ。")
@@ -267,8 +271,6 @@ def run_phase4(dirs: OutputDirs, topics: list[dict]) -> None:
 
         clip_dir = dirs.clips / f"clip_{i+1:03d}"
         clip_dir.mkdir(parents=True, exist_ok=True)
-        clip_video_dir = dirs.video / "clips"
-        clip_video_dir.mkdir(parents=True, exist_ok=True)
 
         topic_title = clip_scripts[i].get("topic_title", f"clip_{i+1}")
         safe_title = "".join(c if c.isalnum() or c in "._-" else "_" for c in topic_title)
@@ -278,16 +280,16 @@ def run_phase4(dirs: OutputDirs, topics: list[dict]) -> None:
             clip_img = Path(clip_images[i])
             clip_auds = [Path(p) for p in clip_audios[i]]
 
+            # 結合音声はclip_dir内に保存、動画は直接video/clips/に出力
             compose_video(
-                title_slide=clip_img,  # クリップはタイトル=コンテンツ画像
+                title_slide=clip_img,
                 content_slides=[],
                 audio_segments=clip_auds,
                 output_dir=clip_dir,
+                output_video_path=clip_video_path,
+                merged_audio_path=clip_dir / "full_narration.wav",
             )
-            # compose_video は output_dir/video/briefing.mp4 に出力するので移動
-            generated = clip_dir / "video" / "briefing.mp4"
-            if generated.exists():
-                generated.rename(clip_video_path)
+            if clip_video_path.exists():
                 clip_video_paths.append(str(clip_video_path))
                 logger.info(f"クリップ動画: {clip_video_path}")
             else:

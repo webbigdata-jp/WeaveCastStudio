@@ -217,6 +217,24 @@ class MediaWindow:
             except Exception:
                 pass
 
+    def _invoke_and_wait(self, func, *args, timeout: float = 2.0):
+        """tkinter スレッド上で関数を実行し、完了を待つ。"""
+        if not self._root:
+            return
+        done = threading.Event()
+
+        def _wrapper():
+            try:
+                func(*args)
+            finally:
+                done.set()
+
+        try:
+            self._root.after(0, _wrapper)
+        except Exception:
+            return
+        done.wait(timeout=timeout)
+
     # ------------------------------------------------------------------
     # 動画再生
     # ------------------------------------------------------------------
@@ -228,8 +246,8 @@ class MediaWindow:
             logger.error(f"動画ファイルが見つかりません: {video_path}")
             return False
 
-        # 静止画モードだった場合、canvas を非表示にする
-        self._invoke(self._switch_to_video_mode)
+        # 静止画モードだった場合、canvas を非表示にする（完了を待つ）
+        self._invoke_and_wait(self._switch_to_video_mode)
 
         media = self._vlc_instance.media_new(str(p))
         self._media_player.set_media(media)

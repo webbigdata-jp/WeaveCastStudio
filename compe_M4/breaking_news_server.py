@@ -146,9 +146,12 @@ class TickerState:
         """ヘッドラインリストに変更があったか簡易チェック。"""
         if len(new_headlines) != len(self.headlines):
             return True
-        new_ids = [a["id"] for a in new_headlines]
-        old_ids = [a["id"] for a in self.headlines]
-        return new_ids != old_ids
+        for new, old in zip(new_headlines, self.headlines):
+            if new["id"] != old["id"]:
+                return True
+            if bool(new.get("is_breaking")) != bool(old.get("is_breaking")):
+                return True
+        return False
 
 
 # ══════════════════════════════════════════════════════════════════

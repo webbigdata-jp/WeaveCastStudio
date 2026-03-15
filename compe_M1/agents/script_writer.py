@@ -72,11 +72,22 @@ def generate_briefing_script(client: genai.Client, briefing_data: dict) -> str:
 トーン: NHKワールドニュースのような落ち着いた報道トーン
 
 画像マーカー:
-- 段落間に [IMAGE: description] マーカーを配置（description は英語）
-- 推奨配置:
-  * 冒頭後: [IMAGE: World map with highlighted regions related to today's topics]
-  * 各トピック間: [IMAGE: Infographic summarizing key positions on <topic>]
-  * 締め近く: [IMAGE: Diplomatic timeline showing recent developments]
+- 段落間に [IMAGE: TYPE: description] マーカーを配置（description は英語）
+- 推奨配置: 冒頭後、各トピック間、締め近くに合計3〜5個
+- TYPE は以下の5種類のいずれか1つを必ず指定すること:
+  * MAP: 地理的な位置関係を示す場合 → [IMAGE: MAP: Strait of Hormuz region with Iran, UAE, Oman labeled]
+  * STANCE: 各国の立場を対比する場合 → [IMAGE: STANCE: US supports open navigation vs Iran restricts passage vs China calls for restraint]
+  * TIMELINE: 時系列で出来事を並べる場合 → [IMAGE: TIMELINE: Feb 25 blockade announced, Feb 28 school attack, Mar 1 UN response]
+  * VERSUS: 二者対比の場合 → [IMAGE: VERSUS: US position vs Iran position on airstrikes]
+  * KEYPOINTS: 要点をまとめる場合 → [IMAGE: KEYPOINTS: 1. Blockade scope 2. International reactions 3. Economic impact]
+
+- description に含めてよい情報: 国名、組織名、日付、原稿中に明記された事実のみ
+- 絶対に禁止（これらが含まれるマーカーは画像生成で無視される）:
+  * 人物の描写: "portrait", "photo", "image of people", "soldiers", "children", "person"
+  * 建物・物体の写実描写: "building", "school", "aircraft", "missile", "weapon", "destroyed", "damaged"
+  * 感情的表現: "crying", "caution tape", "warning", "explosion", "fire", "blood"
+  * "Image of ..." という書き出し（画像の直接描写は禁止）
+  * "Infographic" という単語（TYPEで種類を指定済みなので不要）
 
 文字数: 1200〜1800文字（日本語）
 言語: 本文は日本語。[IMAGE: ...] 内のみ英語。"""
@@ -151,11 +162,14 @@ def generate_clip_scripts(client: genai.Client, briefing_data: dict) -> list[dic
             logger.error(f"  クリップ原稿生成失敗: {e}")
             script = f"{topic_title}に関する最新情報をお伝えします。詳細は全体ブリーフィングをご覧ください。"
 
-        # クリップ用画像プロンプトも生成
+        # クリップ用画像プロンプト（抽象的・非写実的な指示のみ）
         image_prompt = (
-            f"Professional news broadcast infographic about {topic_title}. "
-            f"Dark navy (#0F1E3C) background, white text, modern news graphics style. "
-            f"16:9 aspect ratio. All text labels in Japanese. No photorealistic faces."
+            f"Topic title card for news broadcast. "
+            f"Show the topic name '{topic_title}' prominently in Japanese. "
+            f"Use abstract icons and symbols related to the topic (map icons, flag icons, arrows). "
+            f"Flat design, diagram style only. "
+            f"Do NOT include any photorealistic imagery, people, buildings, or weapons. "
+            f"Do NOT invent any numbers, statistics, or data."
         )
 
         clip_scripts.append({

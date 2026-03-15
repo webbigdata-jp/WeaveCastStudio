@@ -165,7 +165,7 @@ def run_phase2(client: genai.Client, topics: list[dict], dirs: OutputDirs) -> No
     logger.info("=" * 60)
 
     briefing_data = load_json(dirs.data / "briefing_data.json")
-    date_str = datetime.now(timezone.utc).strftime("%Y年%m月%d日")
+    date_str = datetime.now(timezone.utc).strftime("%B %d, %Y")  # e.g. "March 15, 2026"
 
     # 全体原稿
     full_script = generate_briefing_script(client, briefing_data)

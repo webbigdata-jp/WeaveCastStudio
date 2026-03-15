@@ -72,16 +72,17 @@ def generate_title_slide(
     """タイトルスライド画像を生成する。"""
     output_path = output_dir / "slide_title.png"
     prompt = (
-        f'プロフェッショナルなニュース速報のタイトルカード画像を生成してください。\n'
-        f'メインタイトル: 「Middle East Crisis Monitor |」\n'
-        f'日付: {date_str}\n'
-        f'スタイル要件:\n'
-        f'- ダークネイビー (#0F1E3C) の背景\n'
-        f'- 白い太字のタイトルテキストと赤いアクセントバー\n'
-        f'- 右下に "WeaveCast" ブランディングウォーターマーク\n'
-        f'- クリーンでモダンな報道番組風グラフィック\n'
-        f'- 16:9 アスペクト比\n'
-        f'- 人物や国旗は描かない\n'
+        f'Generate a professional news broadcast title card image.\n'
+        f'Main title text: "Middle East Crisis Monitor"\n'
+        f'Date text: {date_str}\n'
+        f'Style requirements:\n'
+        f'- Dark navy (#0F1E3C) background\n'
+        f'- White bold title text with red accent bar\n'
+        f'- "WeaveCast" branding watermark in bottom-right\n'
+        f'- Clean, modern broadcast news graphic\n'
+        f'- 16:9 aspect ratio\n'
+        f'- Flat design only: NO people, NO flags, NO photographs\n'
+        f'- Use only geometric shapes and text\n'
     )
     return _generate_image(client, prompt, output_path, "タイトルスライド")
 
@@ -100,104 +101,191 @@ def generate_news_lineup_image(
     )
 
     prompt = (
-        f'プロフェッショナルなニュース番組の「本日のニュース一覧」画像を生成してください。\n\n'
-        f'タイトル: 「本日のニュース」\n'
-        f'日付: {date_str}\n\n'
-        f'ニュース一覧:\n{topic_lines}\n\n'
-        f'スタイル要件:\n'
-        f'- ダークネイビー (#0F1E3C) の背景\n'
-        f'- 各ニュース項目を番号付きで縦に並べる\n'
-        f'- 白い太字テキスト、各項目の左に番号\n'
-        f'- 上部に赤いアクセントバーと「本日のニュース」タイトル\n'
-        f'- 右下に "WeaveCast" ウォーターマーク\n'
-        f'- クリーンでモダンな報道番組風グラフィック\n'
-        f'- 16:9 アスペクト比\n'
-        f'- テキストはすべて日本語（"WeaveCast" のみ英語可）'
+        f'Generate a professional news broadcast "Today\'s Headlines" lineup image.\n\n'
+        f'Title text: "Today\'s News"\n'
+        f'Date: {date_str}\n\n'
+        f'Headlines:\n{topic_lines}\n\n'
+        f'Style requirements:\n'
+        f'- Dark navy (#0F1E3C) background\n'
+        f'- Each headline numbered vertically\n'
+        f'- White bold text with number on the left of each item\n'
+        f'- Red accent bar at top with title\n'
+        f'- "WeaveCast" watermark in bottom-right\n'
+        f'- Clean, modern broadcast news graphic\n'
+        f'- 16:9 aspect ratio\n'
+        f'- Flat design only: NO people, NO photographs\n'
+        f'- Headline text can be in Japanese (as provided above)\n'
     )
     return _generate_image(client, prompt, output_path, "ニュース一覧画像")
 
 
+_BANNED_KEYWORDS = [
+    "portrait", "photo", "image of", "picture of",
+    "soldiers", "children", "person", "people", "face", "body",
+    "building", "buildings", "school", "schools",
+    "aircraft", "missile", "missiles", "weapon", "weapons", "gun", "tank",
+    "destroyed", "damaged", "ruins", "rubble", "wreckage",
+    "crying", "caution tape", "warning", "explosion", "fire", "blood",
+    "corpse", "dead", "injury", "wound", "victim",
+    "firing", "bombing", "attack",
+]
+
+
+def _sanitize_description(desc: str) -> str:
+    """
+    写実的・扇情的なキーワードを除去し、安全な description に変換する。
+    除去後に内容が崩壊した場合は、固有名詞を抽出してフォールバックする。
+    """
+    sanitized = desc
+    for keyword in _BANNED_KEYWORDS:
+        # ワード境界でマッチ（"building" が "rebuilding" にヒットしないように）
+        pattern = re.compile(r'\b' + re.escape(keyword) + r'(?:s|ing|ed)?\b', re.IGNORECASE)
+        sanitized = pattern.sub("", sanitized)
+    # 余分な空白・記号を整理
+    sanitized = re.sub(r"['\"]s\b", "", sanitized)  # 所有格の残骸 "'s" を除去
+    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+
+    # フォールバック判定: 意味のある英単語（2文字以上、冠詞・前置詞除外）が3語未満なら崩壊
+    stopwords = {"a", "an", "the", "of", "on", "in", "at", "to", "and", "or",
+                 "with", "for", "by", "from", "near", "about", "into", "over"}
+    meaningful_words = [w for w in sanitized.split() if len(w) > 1 and w.lower() not in stopwords]
+    if len(meaningful_words) < 3:
+        # 元のdescから固有名詞（大文字始まりで2文字以上）を抽出
+        proper_nouns = re.findall(r'\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)*\b', desc)
+        # "Image", "Portrait" など禁止語由来の固有名詞を除外
+        banned_proper = {"Image", "Portrait", "Photo", "Picture", "Soldiers", "Children",
+                         "Building", "School", "Aircraft", "Damaged", "Destroyed"}
+        proper_nouns = [n for n in proper_nouns if n not in banned_proper]
+        if proper_nouns:
+            sanitized = "Key topics: " + ", ".join(dict.fromkeys(proper_nouns))  # 重複排除
+        else:
+            sanitized = "General news summary"
+        logger.info(f"サニタイズ後にフォールバック: '{desc}' → '{sanitized}'")
+
+    return sanitized
+
+
+def _parse_image_type(desc: str) -> tuple[str, str]:
+    """
+    [IMAGE: TYPE: description] 形式からTYPEとdescriptionを分離する。
+    TYPE が認識できない場合は ("KEYPOINTS", 元のdesc) を返す。
+    """
+    valid_types = {"MAP", "STANCE", "TIMELINE", "VERSUS", "KEYPOINTS"}
+    match = re.match(r'^(MAP|STANCE|TIMELINE|VERSUS|KEYPOINTS)\s*:\s*(.+)$', desc.strip(), re.IGNORECASE)
+    if match:
+        return match.group(1).upper(), match.group(2).strip()
+    # 旧形式の互換: "Map showing ..." → MAP
+    desc_lower = desc.lower()
+    if desc_lower.startswith("map ") or "map showing" in desc_lower:
+        return "MAP", desc
+    if "timeline" in desc_lower:
+        return "TIMELINE", desc
+    if "comparison" in desc_lower or " vs " in desc_lower or "versus" in desc_lower:
+        return "VERSUS", desc
+    if "key points" in desc_lower or "summary" in desc_lower or "keypoints" in desc_lower:
+        return "KEYPOINTS", desc
+    if "relationship" in desc_lower or "position" in desc_lower or "stance" in desc_lower:
+        return "STANCE", desc
+    # デフォルト: KEYPOINTS（最も安全）
+    return "KEYPOINTS", desc
+
+
 def _build_content_image_prompt(desc: str) -> str:
     """
-    [IMAGE: ...] マーカーの description からカテゴリを判定し、
+    [IMAGE: ...] マーカーの description からTYPEを解析し、
     幻覚を防ぐ制約付きプロンプトを生成する。
     """
-    desc_lower = desc.lower()
+    image_type, raw_desc = _parse_image_type(desc)
+    clean_desc = _sanitize_description(raw_desc)
 
     common_style = (
-        "\n\n【共通スタイル要件】\n"
-        "- ダークネイビー (#0F1E3C) 背景、白テキスト\n"
-        "- NHK/BBC風の報道番組グラフィック\n"
-        "- 16:9 アスペクト比\n"
-        "- 画像内のテキスト・ラベル・凡例はすべて日本語（固有名詞・WeaveCast除く）\n"
-        "- 右下に小さく WeaveCast ウォーターマーク\n"
-        "- フラットデザイン・ダイアグラムスタイルのみ\n"
-        "\n【絶対禁止】\n"
-        "- 写実的な人物・建物・風景・兵器の描写\n"
-        "- 画像生成AIが勝手に作った架空の数値・統計データ\n"
-        "- フォトリアリスティックなスタイル\n"
-        "- 感情的・扇情的なイメージ\n"
+        "\n\n=== STYLE RULES (MUST FOLLOW) ===\n"
+        "- Background: dark navy (#0F1E3C)\n"
+        "- Text color: white\n"
+        "- Aspect ratio: 16:9\n"
+        "- All text labels in English (except the WeaveCast watermark)\n"
+        "- Small 'WeaveCast' watermark in bottom-right corner\n"
+        "- Flat design, diagram/infographic style ONLY\n"
+        "- Clean, modern broadcast news aesthetic (NHK/BBC style)\n"
+        "\n=== ABSOLUTE PROHIBITIONS ===\n"
+        "- NO photorealistic imagery of any kind\n"
+        "- NO depictions of people, faces, bodies, or human figures\n"
+        "- NO buildings, vehicles, weapons, or physical objects rendered realistically\n"
+        "- NO invented numbers, statistics, percentages, or data that are not in the description\n"
+        "- NO emotional or sensational imagery\n"
+        "- NO photographs or photo-like renderings\n"
+        "- Use ONLY geometric shapes, icons, arrows, text boxes, and abstract symbols\n"
     )
 
-    if "map" in desc_lower:
+    if image_type == "MAP":
         prompt = (
-            f"以下の内容を表現する報道番組風の地図グラフィックを生成してください。\n"
-            f"内容: {desc}\n"
-            f"\n地図の要件:\n"
-            f"- シンプルな地図（国境線、海岸線、主要都市名のみ）\n"
-            f"- 関連地域をハイライト（赤またはオレンジ）\n"
-            f"- 矢印やマーカーで重要なポイントを示す\n"
-            f"- 地名ラベルは日本語\n"
+            f"Generate a broadcast-style schematic MAP graphic.\n"
+            f"Content: {clean_desc}\n\n"
+            f"MAP requirements:\n"
+            f"- Simple schematic map with country outlines and coastlines\n"
+            f"- Highlight relevant regions in red or orange\n"
+            f"- Use arrows or markers to indicate key points\n"
+            f"- Country and city labels in ENGLISH\n"
+            f"- Do NOT draw any people, vehicles, or buildings on the map\n"
+            f"- Do NOT add any numbers or statistics\n"
         )
-    elif "relationship" in desc_lower or "position" in desc_lower:
+    elif image_type == "STANCE":
         prompt = (
-            f"以下の内容を表現する報道番組風の関係図・立場対比グラフィックを生成してください。\n"
-            f"内容: {desc}\n"
-            f"\n関係図の要件:\n"
-            f"- 各国・組織を丸または四角のノードで表現\n"
-            f"- 賛成=青系、反対=赤系、中立=灰色系 で色分け\n"
-            f"- ノード間の関係を矢印や線で示す\n"
-            f"- 各ノードに国名と立場の一言要約を日本語で表示\n"
-            f"- 数値は使わない（原文に数値がない限り）\n"
+            f"Generate a broadcast-style STANCE DIAGRAM showing different countries' positions.\n"
+            f"Content: {clean_desc}\n\n"
+            f"Stance diagram requirements:\n"
+            f"- Each country/organization as a labeled box or circle node\n"
+            f"- Color code: supportive=blue, opposed=red, neutral=gray, cautious=yellow\n"
+            f"- Arrows or lines showing relationships between positions\n"
+            f"- Each node shows: country name + one-line stance summary in ENGLISH\n"
+            f"- Do NOT invent any quotes or numbers\n"
+            f"- Do NOT draw any people or realistic objects\n"
         )
-    elif "timeline" in desc_lower:
+    elif image_type == "TIMELINE":
         prompt = (
-            f"以下の内容を表現する報道番組風のタイムラインを生成してください。\n"
-            f"内容: {desc}\n"
-            f"\nタイムラインの要件:\n"
-            f"- 横方向または縦方向の時系列レイアウト\n"
-            f"- 各イベントをドット＋ラベルで表現\n"
-            f"- 日付とイベント名を日本語で表示\n"
-            f"- 重要イベントを赤アクセントで強調\n"
+            f"Generate a broadcast-style TIMELINE graphic.\n"
+            f"Content: {clean_desc}\n\n"
+            f"Timeline requirements:\n"
+            f"- Horizontal or vertical timeline layout\n"
+            f"- Each event as a dot + label\n"
+            f"- Dates in format: 'Mar 1' or '2026-03-01' (Western calendar, NO Japanese era)\n"
+            f"- Event descriptions in ENGLISH\n"
+            f"- Highlight critical events with red accent\n"
+            f"- Do NOT add events that are not in the description\n"
+            f"- Do NOT draw any people or realistic objects\n"
         )
-    elif "comparison" in desc_lower or "table" in desc_lower:
+    elif image_type == "VERSUS":
         prompt = (
-            f"以下の内容を表現する報道番組風の対比表グラフィックを生成してください。\n"
-            f"内容: {desc}\n"
-            f"\n対比表の要件:\n"
-            f"- 左右または上下で2者を対比するレイアウト\n"
-            f"- 各項目を箇条書きで簡潔に表示\n"
-            f"- 対立する立場は赤と青で色分け\n"
-            f"- テキストは日本語\n"
+            f"Generate a broadcast-style VERSUS comparison graphic.\n"
+            f"Content: {clean_desc}\n\n"
+            f"Comparison requirements:\n"
+            f"- Left vs Right layout with clear divider\n"
+            f"- Each side: country/entity name at top, bullet points below\n"
+            f"- Opposing positions in red and blue\n"
+            f"- Text in ENGLISH\n"
+            f"- Do NOT invent any quotes, numbers, or facts\n"
+            f"- Do NOT draw any people or realistic objects\n"
         )
-    elif "key points" in desc_lower or "summary" in desc_lower:
+    elif image_type == "KEYPOINTS":
         prompt = (
-            f"以下の内容を表現する報道番組風のキーポイント要約グラフィックを生成してください。\n"
-            f"内容: {desc}\n"
-            f"\n要約グラフィックの要件:\n"
-            f"- 箇条書きまたはアイコン付きリストで各ポイントを表示\n"
-            f"- 各ポイントに番号またはアイコン\n"
-            f"- テキストは日本語で簡潔に\n"
+            f"Generate a broadcast-style KEY POINTS summary graphic.\n"
+            f"Content: {clean_desc}\n\n"
+            f"Key points requirements:\n"
+            f"- Numbered list or icon-based layout\n"
+            f"- Each point with a simple geometric icon and text\n"
+            f"- Text in ENGLISH\n"
+            f"- Do NOT invent any numbers or data\n"
+            f"- Do NOT draw any people or realistic objects\n"
         )
     else:
-        # デフォルト: 抽象的なインフォグラフィック
         prompt = (
-            f"以下の内容を表現する報道番組風のインフォグラフィックを生成してください。\n"
-            f"内容: {desc}\n"
-            f"\nインフォグラフィックの要件:\n"
-            f"- アイコン、矢印、テキストボックスを使った図解\n"
-            f"- テキスト中心のレイアウト（写実的な描写は禁止）\n"
-            f"- テキストは日本語\n"
+            f"Generate a broadcast-style KEY POINTS summary graphic.\n"
+            f"Content: {clean_desc}\n\n"
+            f"Requirements:\n"
+            f"- Abstract icons, arrows, and text boxes only\n"
+            f"- Text in ENGLISH\n"
+            f"- Do NOT draw any people, buildings, or realistic objects\n"
+            f"- Do NOT invent any numbers or data\n"
         )
 
     return prompt + common_style

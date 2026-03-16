@@ -26,6 +26,7 @@ APScheduler (BackgroundScheduler) を使った定期巡回スケジューラ。
 """
 
 import logging
+import sys
 import time
 from pathlib import Path
 from threading import Event
@@ -36,6 +37,11 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from crawler.drission_crawler import DrissionCrawler
 from store.article_store import ArticleStore
+
+# プロジェクトルートを sys.path に追加（content_index の import 用）
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 logger = logging.getLogger(__name__)
 

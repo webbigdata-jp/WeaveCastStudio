@@ -96,16 +96,13 @@ uv sync
 
 ---
 
-## Step 7: Setup `.env` Files
+## Step 7: Setup `.env` File
 
 ```bash
-# For M1
-cat > compe_M1/config/.env << 'EOF'
+# Single .env at project root (shared by M1, M3, M4)
+cat > ~/WeaveCastStudio/.env << 'EOF'
 GOOGLE_API_KEY=your_api_key_here
 EOF
-
-# For M3 (Same content)
-cp compe_M1/config/.env compe_M3/config/.env
 ```
 
 ---
@@ -117,7 +114,7 @@ Since GCE has no GUI, verify if it runs properly in headless mode.
 ```bash
 cd ~/WeaveCastStudio/compe_M3
 
-uv run test_phase1.py
+uv run main.py crawl
 ```
 
 **If you encounter a Chromium path error:**
@@ -132,7 +129,7 @@ co.set_browser_path('/usr/bin/chromium-browser')
 co.headless(True)  # Headless mode is mandatory on GCE
 ```
 
-> **Verification Point:** It's successful if `test_phase1.py` completes normally and records are inserted into `articles.db`.
+> **Verification Point:** It's successful if `main.py crawl` completes normally and records are inserted into `articles.db`.
 
 ---
 
@@ -158,8 +155,8 @@ Add the following:
 ```cron
 # === WeaveCastStudio: GCE Data Collection ===
 
-# M3: Crawl all sources (Every 30 minutes)
-*/30 * * * * cd /home/$USER/WeaveCastStudio/compe_M3 && /home/$USER/.local/bin/uv run test_phase4.py --all >> /home/$USER/WeaveCastStudio/logs/m3_cron.log 2>&1
+# M3: Full pipeline — crawl all → analyze → compose (Every 2 hours)
+0 */2 * * * cd /home/$USER/WeaveCastStudio/compe_M3 && /home/$USER/.local/bin/uv run main.py pipeline >> /home/$USER/WeaveCastStudio/logs/m3_cron.log 2>&1
 
 # M1: Data collection + Summarization (Every 1 hour)
 0 * * * * cd /home/$USER/WeaveCastStudio/compe_M1 && /home/$USER/.local/bin/uv run main.py --phase 1 >> /home/$USER/WeaveCastStudio/logs/m1_cron.log 2>&1
@@ -182,7 +179,7 @@ crontab -l
 
 # Run manually once and check the logs
 cd ~/WeaveCastStudio/compe_M3
-uv run test_phase4.py --all
+uv run main.py pipeline
 
 cd ~/WeaveCastStudio/compe_M1
 uv run main.py --phase 1

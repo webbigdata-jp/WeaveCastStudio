@@ -99,13 +99,10 @@ uv sync
 ## Step 7: .env の配置
 
 ```bash
-# M1用
-cat > compe_M1/config/.env << 'EOF'
+# プロジェクトルートに1つだけ配置（M1, M3, M4 共通）
+cat > ~/WeaveCastStudio/.env << 'EOF'
 GOOGLE_API_KEY=your_api_key_here
 EOF
-
-# M3用（同じ内容）
-cp compe_M1/config/.env compe_M3/config/.env
 ```
 
 ---
@@ -117,7 +114,7 @@ GCE は GUI がないので、headless モードで動くか確認する。
 ```bash
 cd ~/WeaveCastStudio/compe_M3
 
-uv run test_phase1.py
+uv run main.py crawl
 ```
 
 **もし Chromium パスのエラーが出た場合:**
@@ -132,7 +129,7 @@ co.set_browser_path('/usr/bin/chromium-browser')
 co.headless(True)  # GCEではheadless必須
 ```
 
-> **確認ポイント:** test_phase1.py が正常に完了し、articles.db にレコードが入ればOK。
+> **確認ポイント:** `main.py crawl` が正常に完了し、articles.db にレコードが入ればOK。
 
 ---
 
@@ -158,8 +155,8 @@ crontab -e
 ```cron
 # === WeaveCastStudio: GCE Data Collection ===
 
-# M3: 全ソース一括巡回（30分ごと）
-*/30 * * * * cd /home/$USER/WeaveCastStudio/compe_M3 && /home/$USER/.local/bin/uv run test_phase4.py --all >> /home/$USER/WeaveCastStudio/logs/m3_cron.log 2>&1
+# M3: フルパイプライン — 全ソース巡回 → 分析 → 動画生成（2時間ごと）
+0 */2 * * * cd /home/$USER/WeaveCastStudio/compe_M3 && /home/$USER/.local/bin/uv run main.py pipeline >> /home/$USER/WeaveCastStudio/logs/m3_cron.log 2>&1
 
 # M1: 情報収集+要約（1時間ごと）
 0 * * * * cd /home/$USER/WeaveCastStudio/compe_M1 && /home/$USER/.local/bin/uv run main.py --phase 1 >> /home/$USER/WeaveCastStudio/logs/m1_cron.log 2>&1
@@ -182,7 +179,7 @@ crontab -l
 
 # 手動で一度実行してログ確認
 cd ~/WeaveCastStudio/compe_M3
-uv run test_phase4.py --all
+uv run main.py pipeline
 
 cd ~/WeaveCastStudio/compe_M1
 uv run main.py --phase 1

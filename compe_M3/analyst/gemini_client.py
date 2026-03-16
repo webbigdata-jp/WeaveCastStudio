@@ -38,14 +38,19 @@ def _load_env(env_path: str | None = None) -> None:
 
     Args:
         env_path: .env ファイルのパス。None の場合は以下の順で探索:
-                  1. カレントディレクトリ/.env
-                  2. config/.env
-                  3. ../config/.env（M3 からの相対パス）
+                  1. プロジェクトルート（WeaveCastStudio/）/.env  ← 推奨
+                  2. カレントディレクトリ/.env
+                  3. config/.env（後方互換）
+                  4. ../config/.env（後方互換）
     """
+    # プロジェクトルート = このファイルの2階層上（compe_M3/analyst/ → WeaveCastStudio/）
+    _project_root = Path(__file__).resolve().parent.parent.parent
+
     candidates = (
         [Path(env_path)]
         if env_path
         else [
+            _project_root / ".env",
             Path(".env"),
             Path("config/.env"),
             Path("../config/.env"),

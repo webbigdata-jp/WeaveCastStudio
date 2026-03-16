@@ -27,21 +27,25 @@ import yaml
 from dotenv import load_dotenv
 from google import genai
 
-from agents.source_collector import collect_all_topics
-from agents.summarizer import generate_structured_summary
-from agents.script_writer import generate_briefing_script, generate_clip_scripts
-from agents.image_generator import (
+# プロジェクトルートを sys.path に追加（shared/, content_index の import 用）
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from shared.source_collector import collect_all_topics
+from shared.summarizer import generate_structured_summary
+from shared.script_writer import generate_briefing_script, generate_clip_scripts
+from shared.image_generator import (
     generate_title_slide,
     generate_news_lineup_image,
     generate_content_images,
     generate_briefing_images,
     generate_clip_image,
 )
-from agents.narrator import generate_narration
-from agents.video_composer import compose_video
+from shared.narrator import generate_narration
+from shared.video_composer import compose_video
 
 # ContentIndex
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from content_index import ContentIndexManager, make_entry
 
 # ── ロギング ──
@@ -59,7 +63,7 @@ logger = logging.getLogger("weavecast.main")
 BASE_DIR = Path(__file__).parent
 CONFIG_DIR = BASE_DIR / "config"
 TOPICS_FILE = CONFIG_DIR / "topics.yaml"
-ENV_FILE = CONFIG_DIR / ".env"
+ENV_FILE = _PROJECT_ROOT / ".env"  # プロジェクトルートの .env を使用
 YT_SECRETS_FILE = CONFIG_DIR / "youtube_client_secrets.json"
 YT_TOKEN_FILE = CONFIG_DIR / "youtube_token.json"
 

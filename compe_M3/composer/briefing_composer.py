@@ -6,14 +6,14 @@ M3 Phase 3: ブリーフィング動画生成オーケストレーター
 処理フロー:
   1. ArticleStore から分析済み記事を取得
   2. Gemini で OSINT ブリーフィング原稿を生成
-  3. shared/ (M1 agents) を使って画像生成 → TTS → 動画合成
+  3. shared/ (プロジェクトルート) を使って画像生成 → TTS → 動画合成
   4. data/output/briefing_<timestamp>/ に成果物を保存
 
 M1 との差分:
   - 入力: ArticleStore の分析済み記事群（各国政府見解JSONではなくOSINT記事）
   - 出力パス: data/output/briefing_<timestamp>/
   - script_writer は M3 専用プロンプトで再実装（generate_briefing_script は使わない）
-  - image_generator / narrator / video_composer は shared/ 経由で M1 をそのまま再利用
+  - image_generator / narrator / video_composer は shared/ 経由で M1 と共通利用
 """
 
 import json
@@ -22,7 +22,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))  # GeminiLiveAgent/
+# プロジェクトルートを sys.path に追加（shared/, content_index の import 用）
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from content_index import ContentIndexManager, make_entry
 
 from google import genai
@@ -30,8 +34,7 @@ from google import genai
 from analyst.gemini_client import GeminiClient
 from store.article_store import ArticleStore
 
-# shared/ は compe_M1/agents/ へのシンボリックリンク
-# sys.path への追加は呼び出し元（main / test）で行う
+# shared/ はプロジェクトルート直下の共通モジュール
 from shared.image_generator import generate_title_slide, generate_content_images
 from shared.narrator import generate_narration
 from shared.video_composer import compose_video

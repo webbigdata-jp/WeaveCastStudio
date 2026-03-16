@@ -1,11 +1,21 @@
 """
 analyst/gemini_analyst.py
 
-M3 Gemini 分析パイプライン — STEP 5A
-収集済み記事テキストを GeminiClient 経由で分析し、
-要約・重要度スコア・トピック分類・エンティティ抽出を返す。
+M3 Gemini analysis pipeline — STEP 5A
+Analyzes collected article text via GeminiClient and returns
+a summary, newsworthiness score, topic classification, and entity extraction.
 
-5B (Grounding/Search)・5C (Image生成) は将来このモジュールに追加する。
+Designed for general-purpose news content creators (YouTubers, journalists,
+independent reporters) covering any topic — not limited to geopolitical or
+military subjects.
+
+5B (Grounding/Search) and 5C (Image generation) will be added here in future.
+
+Language behaviour:
+  Text output fields (summary, importance_reason) are generated in the language
+  configured via LANGUAGE in .env (e.g. "ja" → Japanese).
+  Structured fields (topics, key_entities, sentiment) remain in English for
+  consistent downstream processing.
 """
 
 import logging
@@ -15,21 +25,30 @@ from analyst.gemini_client import GeminiClient
 
 logger = logging.getLogger(__name__)
 
-# 分析に使用するモデル
+# Model used for analysis
 _ANALYSIS_MODEL = "gemini-2.5-flash"
 
-# 記事テキストの最大送信文字数（プロンプトコスト削減）
+# Maximum characters of article text sent to the model (reduces prompt cost)
 _MAX_CONTENT_CHARS = 3000
 
-# 重要度スコアが不明な場合のデフォルト値
+# Default importance score when the model returns nothing usable
 _DEFAULT_IMPORTANCE = 5.0
 
-_SYSTEM_PROMPT = """You are a professional OSINT intelligence analyst specializing in 
-geopolitical and military affairs. You analyze articles from verified sources and 
-produce concise, structured intelligence assessments. Be precise, factual, and 
-avoid speculation beyond what the source material supports."""
+_SYSTEM_PROMPT = """You are an experienced news editor and content analyst.
+You evaluate articles from a range of sources — news outlets, government bodies,
+research institutions, and social media — and produce concise, structured assessments
+that help content creators decide what to cover and how to frame it.
+Be factual, balanced, and focus on what will resonate with a general audience."""
 
-_ANALYSIS_PROMPT_TEMPLATE = """Analyze the following article and produce a structured intelligence assessment.
+# -------------------------------------------------------------------
+# NOTE FOR MAINTAINERS:
+# The analysis prompt below is intentionally general-purpose.
+# If you are deploying WeaveCastStudio for a specialist audience
+# (e.g. finance, sports, local politics), customise the scoring guide
+# and the "topics" examples to match your content vertical.
+# The {output_lang} placeholder is filled at runtime from .env LANGUAGE.
+# -------------------------------------------------------------------
+_ANALYSIS_PROMPT_TEMPLATE = """Analyze the following article and produce a structured content assessment.
 
 SOURCE: {source_name} (Credibility: {credibility}/5, Tier: {tier})
 URL: {url}
@@ -39,26 +58,36 @@ CONTENT (first {max_chars} chars):
 
 Output ONLY valid JSON with this exact structure:
 {{
-  "summary": "2-3 sentence summary of the key information",
+  "summary": "2-3 sentence summary of the key information written in {output_lang}",
   "importance_score": <float 0.0-10.0>,
-  "importance_reason": "one sentence explaining the score",
-  "topics": ["military", "humanitarian", "diplomatic", ...],
-  "key_entities": ["Iran", "CENTCOM", "UN", ...],
+  "importance_reason": "one sentence explaining the score, written in {output_lang}",
+  "topics": ["politics", "economy", "science", "culture", "conflict", ...],
+  "key_entities": ["Person Name", "Organisation", "Location", ...],
   "sentiment": "positive|negative|neutral|alarming",
   "has_actionable_intel": <true|false>
 }}
 
+Field notes:
+- summary and importance_reason MUST be written in {output_lang}.
+- topics and key_entities MUST remain in English regardless of output language.
+- has_actionable_intel: true when the article contains a concrete development
+  that a content creator should report on immediately (e.g. new law enacted,
+  major incident confirmed, official statement with direct quotes).
+
 Scoring guide for importance_score:
-- 9-10: Breaking — immediate military action, leadership changes, mass casualties
-- 7-8:  High     — significant developments, new fronts, major diplomatic shifts
-- 5-6:  Medium   — ongoing situation updates, minor skirmishes, routine statements
-- 3-4:  Low      — background analysis, historical context, opinion pieces
-- 0-2:  Minimal  — tangential, outdated, or redundant information"""
+- 9-10: Breaking  — major confirmed event, significant policy change, large-scale incident
+- 7-8:  High      — notable development, new official statement, trending story
+- 5-6:  Medium    — ongoing situation update, background context, expert opinion
+- 3-4:  Low       — soft news, editorial, analysis without new facts
+- 0-2:  Minimal   — tangential, outdated, promotional, or redundant content"""
 
 
 class GeminiAnalyst:
     """
-    収集済み記事を Gemini で分析する M3 ユースケースクラス。
+    Analyzes collected articles using Gemini (M3 use-case class).
+
+    Text output fields (summary, importance_reason) are returned in the language
+    specified by LANGUAGE in .env.  Structured fields stay in English.
 
     Usage:
         analyst = GeminiAnalyst()
@@ -68,33 +97,37 @@ class GeminiAnalyst:
 
     def __init__(self, env_path: str | None = None):
         self._client = GeminiClient(env_path=env_path)
+        # Resolve output language once; reuse across all calls
+        self._output_lang = self._client.language.prompt_lang
 
     # ──────────────────────────────────────────
-    # 公開インターフェース
+    # Public interface
     # ──────────────────────────────────────────
 
     def analyze_article(self, article: dict) -> dict[str, Any]:
         """
-        1 記事を分析し、要約・重要度・トピック等を返す。（STEP 5A）
-        Gemini には収集済みテキストのみを渡す（Web 検索はしない）。
+        Analyze one article and return summary, score, topics, etc. (STEP 5A)
+        Only collected text is sent to Gemini — no web search is performed here.
+
+        Text fields (summary, importance_reason) are in the language set by
+        LANGUAGE in .env.  All other fields remain in English.
 
         Args:
-            article: ArticleStore から取得した記事 dict
-                     必須キー: source_name, credibility, tier, url, title, text_content
+            article: article dict from ArticleStore.
+                     Required keys: source_name, credibility, tier, url,
+                                    title, text_content
         Returns:
-            dict: 分析結果
-                {
-                  "summary": str,
-                  "importance_score": float,
-                  "importance_reason": str,
-                  "topics": list[str],
-                  "key_entities": list[str],
-                  "sentiment": str,
-                  "has_actionable_intel": bool
-                }
+            dict with keys:
+                summary           (str, in output language)
+                importance_score  (float 0.0-10.0)
+                importance_reason (str, in output language)
+                topics            (list[str], English)
+                key_entities      (list[str], English)
+                sentiment         (str)
+                has_actionable_intel (bool)
         Raises:
-            RuntimeError: Gemini API 呼び出し失敗時（リトライ上限到達）
-            ValueError: JSON パース失敗時
+            RuntimeError: Gemini API call failed after all retries
+            ValueError: JSON parsing failed
         """
         content = (article.get("text_content") or "").strip()
         if not content:
@@ -111,11 +144,12 @@ class GeminiAnalyst:
             title=article.get("title", ""),
             max_chars=_MAX_CONTENT_CHARS,
             content=content[:_MAX_CONTENT_CHARS],
+            output_lang=self._output_lang,
         )
 
         logger.info(
             f"[GeminiAnalyst] Analyzing: {article.get('title', '')[:60]} "
-            f"(id={article.get('id')})"
+            f"(id={article.get('id')}, lang={self._output_lang})"
         )
 
         result = self._client.generate_json(
@@ -124,7 +158,7 @@ class GeminiAnalyst:
             system_instruction=_SYSTEM_PROMPT,
         )
 
-        # 必須フィールドの補完（モデルが欠落させた場合のフォールバック）
+        # Fill in any fields the model omitted
         result.setdefault("summary", "Analysis unavailable")
         result.setdefault("importance_score", _DEFAULT_IMPORTANCE)
         result.setdefault("importance_reason", "")
@@ -133,7 +167,7 @@ class GeminiAnalyst:
         result.setdefault("sentiment", "neutral")
         result.setdefault("has_actionable_intel", False)
 
-        # importance_score を float に正規化
+        # Normalise importance_score to float in [0.0, 10.0]
         try:
             result["importance_score"] = float(result["importance_score"])
             result["importance_score"] = max(0.0, min(10.0, result["importance_score"]))
@@ -152,16 +186,17 @@ class GeminiAnalyst:
         stop_on_error: bool = False,
     ) -> list[dict]:
         """
-        複数記事をバッチ分析する。
-        各結果には article_id キーを付与して返す。
+        Batch-analyze multiple articles.
+        Each result includes an article_id key for DB write-back.
 
         Args:
-            articles: 記事 dict のリスト（analyze_article と同じ形式）
-            stop_on_error: True の場合、1 件失敗で即座に例外を送出する
+            articles: list of article dicts (same format as analyze_article)
+            stop_on_error: if True, raise immediately on first failure;
+                           if False (default), failed articles are returned
+                           with fallback values so the pipeline keeps running
         Returns:
-            list[dict]: 各記事の分析結果リスト
-                        失敗した記事はフォールバック値で埋めて含める
-                        （stop_on_error=False の場合）
+            list[dict]: analysis result per article (failures filled with defaults
+                        when stop_on_error=False)
         """
         results: list[dict] = []
 
@@ -181,7 +216,7 @@ class GeminiAnalyst:
                 if stop_on_error:
                     raise
 
-                # フォールバック: 分析失敗でも後続パイプラインを止めない
+                # Fallback: keep the pipeline running even on individual failures
                 results.append({
                     "article_id": article_id,
                     "summary": f"Analysis failed: {e}",
@@ -198,6 +233,3 @@ class GeminiAnalyst:
             f"{len(results)}/{len(articles)} processed"
         )
         return results
-
-
-

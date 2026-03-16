@@ -1,8 +1,8 @@
 """
 store/article_store.py
 
-巡回結果（記事・キャプチャ・メタデータ）をSQLiteに格納・検索するストア。
-Gemini分析結果の書き戻しも担当する。
+SQLite store for crawl results (articles, screenshots, metadata).
+Also handles writing back Gemini analysis results.
 """
 
 import hashlib
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class ArticleStore:
-    """巡回結果を格納・検索するSQLiteストア"""
+    """SQLite store for crawl results and Gemini analysis output"""
 
     def __init__(self, db_path: str = "data/articles.db"):
         self.db_path = db_path
@@ -25,7 +25,7 @@ class ArticleStore:
         self._init_db()
 
     def _init_db(self) -> None:
-        """テーブルとインデックスを初期化する"""
+        """Initialise tables and indexes"""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS articles (
@@ -42,12 +42,12 @@ class ArticleStore:
                     tier           INTEGER,
                     is_top_page    BOOLEAN DEFAULT FALSE,
 
-                    -- Gemini分析結果（analyze後に更新）
+                    -- Gemini analysis results (populated after analyze step)
                     summary            TEXT,
                     importance_score   REAL,
                     importance_reason  TEXT,
-                    topics             TEXT,   -- JSON配列
-                    key_entities       TEXT,   -- JSON配列
+                    topics             TEXT,   -- JSON array
+                    key_entities       TEXT,   -- JSON array
                     sentiment          TEXT,
                     has_actionable_intel BOOLEAN,
                     ai_image_path      TEXT,
@@ -80,18 +80,18 @@ class ArticleStore:
         logger.debug(f"ArticleStore initialized: {self.db_path}")
 
     # ──────────────────────────────────────────
-    # 書き込み系
+    # Write methods
     # ──────────────────────────────────────────
 
     def save_article(self, article: dict) -> Optional[int]:
         """
-        記事を保存し、新規挿入された場合はそのIDを返す。
-        同一 url_hash + crawled_at が既存なら None を返す（重複スキップ）。
+        Save an article and return its new row ID.
+        Returns None if the url_hash + crawled_at combination already exists (duplicate skip).
 
         Args:
-            article: PlaywrightCrawlerが返すdict
+            article: dict returned by DrissionCrawler
         Returns:
-            int: 挿入されたrow ID（重複の場合はNone）
+            int: inserted row ID, or None on duplicate
         """
         url_hash = hashlib.md5(article["url"].encode()).hexdigest()
 
@@ -128,11 +128,11 @@ class ArticleStore:
 
     def update_analysis(self, article_id: int, analysis: dict) -> None:
         """
-        Gemini分析結果をDBに書き戻す。
+        Write Gemini analysis results back to the DB.
 
         Args:
             article_id: articles.id
-            analysis: GeminiAnalystが返すdict
+            analysis: dict returned by GeminiAnalyst
         """
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
@@ -163,7 +163,7 @@ class ArticleStore:
         logger.debug(f"Analysis updated for article id={article_id}")
 
     def mark_used_in_briefing(self, article_ids: list[int]) -> None:
-        """ブリーフィングに使用した記事をフラグ立て"""
+        """Mark articles as used in a briefing"""
         with sqlite3.connect(self.db_path) as conn:
             conn.executemany(
                 "UPDATE articles SET used_in_briefing = TRUE WHERE id = ?",
@@ -173,14 +173,14 @@ class ArticleStore:
 
     def mark_breaking(self, article_ids: list[int], breaking: bool = True) -> None:
         """
-        BREAKINGフラグを立てる（または解除する）。
+        Set (or clear) the BREAKING flag on articles.
 
-        CrawlScheduler が importance_score >= 9.0 の記事を検知した際に呼び出す想定。
-        M4 はこのフラグを監視して緊急テロップを流す。
+        Called by CrawlScheduler when importance_score >= 9.0 is detected.
+        M4 monitors this flag to trigger emergency ticker overlays.
 
         Args:
-            article_ids: フラグを更新する記事IDのリスト
-            breaking: True=BREAKING扱い、False=解除
+            article_ids: list of article IDs to update
+            breaking: True to set BREAKING, False to clear
         """
         with sqlite3.connect(self.db_path) as conn:
             conn.executemany(
@@ -193,17 +193,17 @@ class ArticleStore:
         )
 
     # ──────────────────────────────────────────
-    # 読み取り系
+    # Read methods
     # ──────────────────────────────────────────
 
     def get_unanalyzed(self, limit: int = 20) -> list[dict]:
         """
-        未分析の記事を優先度順（Tier昇順 → 新しい順）で取得する。
+        Fetch unanalyzed articles ordered by priority (Tier ASC, then newest first).
 
         Args:
-            limit: 最大取得件数
+            limit: maximum number of rows to return
         Returns:
-            list[dict]: 記事データのリスト
+            list[dict]: article data
         """
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -217,13 +217,13 @@ class ArticleStore:
 
     def get_top_articles(self, limit: int = 15, hours: int = 6) -> list[dict]:
         """
-        直近N時間の記事を重要度スコア降順・信頼性降順で取得する。
+        Fetch analyzed articles from the last N hours, sorted by importance then credibility.
 
         Args:
-            limit: 最大取得件数
-            hours: 直近何時間以内か
+            limit: maximum number of rows to return
+            hours: look-back window in hours
         Returns:
-            list[dict]: 分析済み記事のリスト
+            list[dict]: analyzed articles
         """
         cutoff = datetime.now(timezone.utc).isoformat()
         with sqlite3.connect(self.db_path) as conn:
@@ -238,7 +238,7 @@ class ArticleStore:
         return [dict(r) for r in rows]
 
     def get_by_source(self, source_id: str, limit: int = 10) -> list[dict]:
-        """特定ソースの最新記事を取得"""
+        """Fetch the most recent articles for a specific source"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
@@ -250,7 +250,7 @@ class ArticleStore:
         return [dict(r) for r in rows]
 
     def get_by_topic(self, topic: str, limit: int = 10) -> list[dict]:
-        """topicsフィールドにキーワードを含む記事を取得（JSON文字列検索）"""
+        """Fetch articles whose topics field contains the given keyword (JSON string search)"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
@@ -263,7 +263,7 @@ class ArticleStore:
         return [dict(r) for r in rows]
 
     # ──────────────────────────────────────────
-    # M4向け検索メソッド
+    # Search methods for M4
     # ──────────────────────────────────────────
 
     def search(
@@ -274,18 +274,18 @@ class ArticleStore:
         hours: int | None = None,
     ) -> list[dict]:
         """
-        キーワードでtitle・summary・topics・key_entitiesを横断的にOR検索する。
+        OR-search across title, summary, topics, and key_entities by keyword.
 
-        M4からの「国連についてレポートを出して」のような自然語クエリを想定。
-        分析済み記事（importance_score IS NOT NULL）のみが対象。
+        Designed for natural-language queries from M4 (e.g. "give me a report on the UN").
+        Only analyzed articles (importance_score IS NOT NULL) are searched.
 
         Args:
-            query: 検索キーワード（例: "UN", "Iran", "military"）
-            min_importance: 重要度スコアの下限（0.0 = フィルタなし）
-            limit: 最大取得件数
-            hours: 直近N時間以内に限定する場合に指定（None = 全期間）
+            query: search keyword (e.g. "UN", "climate", "military")
+            min_importance: lower bound for importance_score (0.0 = no filter)
+            limit: maximum number of rows to return
+            hours: restrict to the last N hours (None = all time)
         Returns:
-            list[dict]: 重要度降順の記事リスト
+            list[dict]: articles sorted by importance desc
         """
         like = f"%{query}%"
         params: list = [like, like, like, like, min_importance]
@@ -322,16 +322,15 @@ class ArticleStore:
 
     def get_breaking(self, limit: int = 10) -> list[dict]:
         """
-        BREAKINGフラグが立っている記事を重要度降順で取得する。
+        Fetch articles flagged as BREAKING, sorted by importance desc.
 
-        CrawlScheduler がクロール時に importance_score >= 9.0 の記事に
-        mark_breaking() を呼び出しておく前提。
-        M4 はこのメソッドを定期ポーリングして緊急テロップを検知する。
+        CrawlScheduler calls mark_breaking() during crawl when importance_score >= 9.0.
+        M4 polls this method to detect emergency ticker events.
 
         Args:
-            limit: 最大取得件数
+            limit: maximum number of rows to return
         Returns:
-            list[dict]: is_breaking=True の記事リスト（重要度降順）
+            list[dict]: articles with is_breaking=True, sorted by importance desc
         """
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -351,18 +350,17 @@ class ArticleStore:
         analyzed_only: bool = True,
     ) -> list[dict]:
         """
-        直近24時間の記事タイトル一覧を重要度降順で返す。
+        Return a lightweight list of article titles from the last 24 hours, sorted by importance desc.
 
-        M4 が「本日の主要ニュース一覧」を生成する際の入力として使用。
-        Gemini に渡しやすいよう、id・title・importance_score・topics の
-        軽量フィールドのみを返す。
+        Used by M4 to build "today's top news" summaries for Gemini.
+        Returns only lightweight fields: id, title, importance_score, topics,
+        source_name, crawled_at, is_breaking.
 
         Args:
-            min_importance: 重要度スコアの下限（0.0 = 全件）
-            analyzed_only: True の場合、分析済み（importance_score IS NOT NULL）のみ返す
+            min_importance: lower bound for importance_score (0.0 = all)
+            analyzed_only: if True, return only articles with importance_score IS NOT NULL
         Returns:
-            list[dict]: 各要素は id, title, importance_score, topics, source_name,
-                        crawled_at, is_breaking のみを含む軽量dict
+            list[dict]: lightweight article dicts
         """
         analysis_filter = "AND importance_score IS NOT NULL" if analyzed_only else ""
         cutoff = datetime.now(timezone.utc).isoformat()
@@ -383,7 +381,7 @@ class ArticleStore:
         return [dict(r) for r in rows]
 
     def get_stats(self) -> dict:
-        """格納状況のサマリを返す（デバッグ用）"""
+        """Return a storage summary dict (for debug / monitoring)"""
         with sqlite3.connect(self.db_path) as conn:
             total = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
             analyzed = conn.execute(

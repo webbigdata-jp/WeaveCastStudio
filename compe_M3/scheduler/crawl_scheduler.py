@@ -1,27 +1,28 @@
 """
 scheduler/crawl_scheduler.py
 
-APScheduler (BackgroundScheduler) を使った定期巡回スケジューラ。
+Periodic crawl scheduler using APScheduler (BackgroundScheduler).
 
-設計方針:
-  - BackgroundScheduler（スレッドベース）を使用
-    → Windows / WSL / Linux いずれでも動作（systemd/cron 非依存）
-  - DrissionCrawler は同期 API のため、スレッドと相性が良い
-  - 巡回 + ArticleStore 保存まで担当。Gemini 分析・動画生成は呼び出し元が判断
-  - ソースごとに独立したジョブを登録（max_instances=1 で多重実行を防止）
+Design notes:
+  - Uses BackgroundScheduler (thread-based) — works on Windows / WSL / Linux
+    without depending on systemd or cron.
+  - DrissionCrawler uses a synchronous API, which plays well with threads.
+  - Responsible for crawling + ArticleStore persistence only.
+    Gemini analysis and video generation are left to the caller.
+  - Each source gets its own independent job (max_instances=1 prevents overlap).
 
-主な使い方:
-  # 定期巡回（デーモン起動）
+Typical usage:
+  # Periodic crawl (daemon)
   scheduler = CrawlScheduler()
   scheduler.start()
-  # ... メインスレッドで他の処理 ...
+  # ... other work on the main thread ...
   scheduler.stop()
 
-  # オンデマンド全巡回
+  # On-demand full crawl
   scheduler = CrawlScheduler()
   results = scheduler.crawl_all_now()
 
-  # オンデマンド単一ソース巡回
+  # On-demand single-source crawl
   results = scheduler.crawl_source_now("un_news")
 """
 
@@ -38,27 +39,27 @@ from apscheduler.triggers.interval import IntervalTrigger
 from crawler.drission_crawler import DrissionCrawler
 from store.article_store import ArticleStore
 
-# プロジェクトルートを sys.path に追加（content_index の import 用）
+# Add project root to sys.path (for content_index import)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 logger = logging.getLogger(__name__)
 
-# sources.yaml のデフォルトパス
+# Default path to sources.yaml
 _DEFAULT_CONFIG = Path("config/sources.yaml")
 
-# ソースごとのデフォルト巡回間隔（sources.yaml に crawl_interval_min がない場合）
+# Default crawl interval per source when crawl_interval_min is absent in sources.yaml
 _DEFAULT_INTERVAL_MIN = 15
 
 
 class CrawlScheduler:
     """
-    sources.yaml に基づいてソースを定期巡回するスケジューラ。
+    Periodic source crawler driven by sources.yaml.
 
     Args:
-        config_path: sources.yaml のパス
-        output_dir: クロール成果物の保存先ディレクトリ
+        config_path: path to sources.yaml
+        output_dir: directory for crawl artifacts
     """
 
     def __init__(
@@ -72,21 +73,21 @@ class CrawlScheduler:
         self._store = ArticleStore()
         self._scheduler = BackgroundScheduler(
             job_defaults={
-                "coalesce": True,       # 遅延した複数実行は1回にまとめる
-                "max_instances": 1,     # 同一ジョブの多重実行を防止
-                "misfire_grace_time": 60,  # 60秒以内のズレは許容
+                "coalesce": True,          # merge multiple delayed runs into one
+                "max_instances": 1,        # prevent concurrent runs of the same job
+                "misfire_grace_time": 60,  # tolerate up to 60s of timing drift
             }
         )
         self._running = False
 
     # ──────────────────────────────────────────
-    # 公開インターフェース
+    # Public interface
     # ──────────────────────────────────────────
 
     def start(self) -> None:
         """
-        バックグラウンドで定期巡回を開始する。
-        各ソースの crawl_interval_min に従ってジョブを登録する。
+        Start periodic crawling in the background.
+        Registers one job per source according to its crawl_interval_min.
         """
         if self._running:
             logger.warning("[Scheduler] Already running")
@@ -117,10 +118,10 @@ class CrawlScheduler:
 
     def stop(self, wait: bool = True) -> None:
         """
-        定期巡回を停止する。
+        Stop the periodic crawler.
 
         Args:
-            wait: True の場合、実行中のジョブが完了するまで待機する
+            wait: if True, block until all running jobs complete
         """
         if not self._running:
             return
@@ -130,11 +131,11 @@ class CrawlScheduler:
 
     def crawl_all_now(self) -> dict[str, list[dict]]:
         """
-        全ソースを即座に一括巡回する（オンデマンド）。
-        バックグラウンドスケジューラとは独立して実行される。
+        Crawl all sources immediately (on-demand).
+        Runs independently of the background scheduler.
 
         Returns:
-            {source_id: [article_dict, ...]} の辞書
+            dict mapping source_id → list of article dicts
         """
         logger.info(f"[Scheduler] crawl_all_now: {len(self._sources)} sources")
         results: dict[str, list[dict]] = {}
@@ -152,7 +153,6 @@ class CrawlScheduler:
                 results[source_id] = []
 
         total = sum(len(v) for v in results.values())
-        new_saves = self._last_new_saves  # _crawl_and_store 内で更新
         logger.info(
             f"[Scheduler] crawl_all_now complete: "
             f"{total} articles total"
@@ -161,14 +161,14 @@ class CrawlScheduler:
 
     def crawl_source_now(self, source_id: str) -> list[dict]:
         """
-        指定ソースを即座に巡回する（オンデマンド）。
+        Crawl a single source immediately (on-demand).
 
         Args:
-            source_id: sources.yaml の id フィールド
+            source_id: the id field from sources.yaml
         Returns:
-            巡回した記事のリスト
+            list of crawled article dicts
         Raises:
-            ValueError: source_id が見つからない場合
+            ValueError: if source_id is not found
         """
         source = self._find_source(source_id)
         if source is None:
@@ -181,7 +181,7 @@ class CrawlScheduler:
 
     def get_status(self) -> dict:
         """
-        スケジューラの現在状態を返す（デバッグ・モニタリング用）。
+        Return the current scheduler state (for debug / monitoring).
 
         Returns:
             {
@@ -207,11 +207,12 @@ class CrawlScheduler:
 
     def run_forever(self, stop_event: Event | None = None) -> None:
         """
-        start() 後にメインスレッドをブロックして常駐する。
-        Ctrl+C または stop_event.set() で終了する。
+        Call start() then block the main thread indefinitely.
+        Exits on Ctrl+C or when stop_event.set() is called.
 
         Args:
-            stop_event: threading.Event。set() されると終了する（テスト・統合用）
+            stop_event: threading.Event — set it to trigger a clean shutdown
+                        (useful for tests and integration scenarios)
         """
         self.start()
         logger.info("[Scheduler] Running. Press Ctrl+C to stop.")
@@ -226,15 +227,15 @@ class CrawlScheduler:
             self.stop()
 
     # ──────────────────────────────────────────
-    # 内部処理
+    # Internal helpers
     # ──────────────────────────────────────────
 
-    _last_new_saves: int = 0  # crawl_all_now 向けの簡易カウンタ
+    _last_new_saves: int = 0  # simple counter for crawl_all_now
 
     def _crawl_and_store(self, source: dict) -> list[dict]:
         """
-        1 ソースを巡回して ArticleStore に保存し、記事リストを返す。
-        APScheduler のジョブ関数としても、直接呼び出しとしても使用する。
+        Crawl one source, persist results to ArticleStore, and return the article list.
+        Used both as an APScheduler job function and as a direct call.
         """
         logger.info(f"[Scheduler] Crawling: {source['name']}")
         try:
@@ -258,7 +259,7 @@ class CrawlScheduler:
             f"[Scheduler] {source['name']}: "
             f"{len(articles)} crawled, {new_saves} new saves"
         )
-        # 重要度9.0以上の記事は BREAKING フラグで ContentIndex に即時登録
+        # Register articles with importance_score >= 9.0 as BREAKING in ContentIndex immediately
         from content_index import ContentIndexManager, make_entry
         mgr = ContentIndexManager()
         for article in articles:
@@ -283,10 +284,10 @@ class CrawlScheduler:
         return articles
 
     def _load_sources(self) -> list[dict]:
-        """sources.yaml を読み込んで返す"""
+        """Load and return sources from sources.yaml"""
         if not self._config_path.exists():
             raise FileNotFoundError(
-                f"sources.yaml が見つかりません: {self._config_path}"
+                f"sources.yaml not found: {self._config_path}"
             )
         with open(self._config_path, encoding="utf-8") as f:
             config = yaml.safe_load(f)
@@ -295,7 +296,7 @@ class CrawlScheduler:
         return sources
 
     def _find_source(self, source_id: str) -> dict | None:
-        """source_id に一致するソース設定を返す"""
+        """Return the source config matching source_id, or None"""
         for s in self._sources:
             if s["id"] == source_id:
                 return s

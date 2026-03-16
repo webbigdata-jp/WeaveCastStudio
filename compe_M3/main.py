@@ -1,42 +1,42 @@
 """
 compe_M3/main.py
 
-M3 Fact Checker / Crawler — 統合 CLI
+M3 Fact Checker / Crawler — Unified CLI
 
-サブコマンド:
-  crawl     — ソース巡回 + DB保存（旧 test_phase1）
-  analyze   — Gemini 分析（旧 test_phase2）
-  compose   — ブリーフィング動画 / ショートクリップ生成（旧 test_phase3）
-  schedule  — 定期巡回スケジューラ（旧 test_phase4）
-  pipeline  — crawl → analyze → compose 一括実行（旧 test_phase4 --all 相当）
+Subcommands:
+  crawl     — Crawl sources and save to DB (replaces test_phase1)
+  analyze   — Gemini analysis (replaces test_phase2)
+  compose   — Generate briefing video / short clips (replaces test_phase3)
+  schedule  — Periodic crawl scheduler (replaces test_phase4)
+  pipeline  — Run crawl → analyze → compose in one shot (replaces test_phase4 --all)
 
-使い方:
-  # ソース巡回
-  uv run main.py crawl                          # デフォルト: un_news
-  uv run main.py crawl --source centcom          # 指定ソース
-  uv run main.py crawl --all                     # 全ソース一括
-  uv run main.py crawl --list-sources            # 登録ソース一覧
+Usage:
+  # Crawl sources
+  uv run main.py crawl                          # Default: un_news
+  uv run main.py crawl --source centcom          # Specific source
+  uv run main.py crawl --all                     # All sources at once
+  uv run main.py crawl --list-sources            # List registered sources
 
-  # 分析
-  uv run main.py analyze                         # 未分析記事をバッチ分析
-  uv run main.py analyze --limit 3               # 最大3件のみ
+  # Analyze
+  uv run main.py analyze                         # Batch-analyze unanalyzed articles
+  uv run main.py analyze --limit 3               # Limit to 3 articles
 
-  # ブリーフィング動画生成
-  uv run main.py compose                         # フル実行
-  uv run main.py compose --dry-run               # 原稿のみ（動画生成スキップ）
-  uv run main.py compose --short-clips           # ショートクリップモード
-  uv run main.py compose --short-clips --limit 1 # 1件のみ
+  # Generate briefing video
+  uv run main.py compose                         # Full run
+  uv run main.py compose --dry-run               # Script only (skip video generation)
+  uv run main.py compose --short-clips           # Short clip mode
+  uv run main.py compose --short-clips --limit 1 # Single clip
 
-  # 定期スケジューラ
-  uv run main.py schedule                        # デーモン起動（Ctrl+C で停止）
-  uv run main.py schedule --duration 30          # 30秒後に自動停止（動作確認用）
+  # Scheduler
+  uv run main.py schedule                        # Daemon mode (Ctrl+C to stop)
+  uv run main.py schedule --duration 30          # Auto-stop after 30s (for testing)
 
-  # 一括パイプライン
+  # Full pipeline
   uv run main.py pipeline                        # crawl_all → analyze → compose
-  uv run main.py pipeline --dry-run              # compose を dry_run で実行
+  uv run main.py pipeline --dry-run              # Run compose in dry_run mode
 
-  # 共通オプション
-  uv run main.py --debug crawl                   # デバッグ出力あり
+  # Common options
+  uv run main.py --debug crawl                   # Enable debug output
 """
 
 import argparse
@@ -48,13 +48,13 @@ from threading import Event
 
 import yaml
 
-# ── sys.path 設定 ──
-# M3 ルート（crawler/, store/, analyst/, composer/ の import 用）
+# ── sys.path setup ──
+# M3 root (for crawler/, store/, analyst/, composer/ imports)
 _M3_ROOT = Path(__file__).parent
 if str(_M3_ROOT) not in sys.path:
     sys.path.insert(0, str(_M3_ROOT))
 
-# プロジェクトルート（content_index, shared/ の import 用）
+# Project root (for content_index, shared/ imports)
 _PROJECT_ROOT = _M3_ROOT.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -63,12 +63,12 @@ logger = logging.getLogger("compe_m3")
 
 
 # ══════════════════════════════════════════════
-# サブコマンド実装
+# Subcommand implementations
 # ══════════════════════════════════════════════
 
 
 def cmd_crawl(args: argparse.Namespace) -> None:
-    """ソース巡回 + DB保存"""
+    """Crawl sources and save to DB"""
     from crawler.drission_crawler import DrissionCrawler
     from store.article_store import ArticleStore
 
@@ -87,7 +87,7 @@ def cmd_crawl(args: argparse.Namespace) -> None:
         _crawl_all(args)
         return
 
-    # 単一ソース巡回
+    # Single source crawl
     source_id = args.source
     sources = _load_sources()
     source = next((s for s in sources if s["id"] == source_id), None)
@@ -119,7 +119,7 @@ def cmd_crawl(args: argparse.Namespace) -> None:
 
 
 def _crawl_all(args: argparse.Namespace) -> None:
-    """全ソース一括巡回"""
+    """Crawl all sources at once"""
     from scheduler.crawl_scheduler import CrawlScheduler
     from store.article_store import ArticleStore
 
@@ -139,14 +139,14 @@ def _crawl_all(args: argparse.Namespace) -> None:
 
 
 def cmd_analyze(args: argparse.Namespace) -> None:
-    """Gemini 分析"""
+    """Run Gemini analysis on unanalyzed articles"""
     from analyst.gemini_client import GeminiClient
     from analyst.gemini_analyst import GeminiAnalyst
     from store.article_store import ArticleStore
 
     logger.info("=== Analyze Articles ===")
 
-    # GeminiClient 初期化確認
+    # Verify GeminiClient can initialise
     try:
         client = GeminiClient()
     except EnvironmentError as e:
@@ -191,32 +191,32 @@ def cmd_analyze(args: argparse.Namespace) -> None:
 
 
 def cmd_compose(args: argparse.Namespace) -> None:
-    """ブリーフィング動画 / ショートクリップ生成"""
+    """Generate briefing video / short clips"""
     logger.info("=== Compose ===")
     logger.info(f"  mode       : {'short_clips' if args.short_clips else 'briefing'}")
     logger.info(f"  dry_run    : {args.dry_run}")
     logger.info(f"  hours      : {args.hours}")
 
-    # shared/ symlink チェック（後方互換: 旧環境で symlink が残っている場合への対応）
-    # プロジェクトルートの shared/ が存在し import 可能であることを確認
+    # Check shared/ symlink (backward compat: handle legacy environments with old symlink)
+    # Verify that shared/ under the project root (WeaveCastStudio/) is importable
     try:
         from shared import narrator  # noqa: F401
     except ImportError:
         logger.error(
-            "shared/ モジュールが見つかりません。\n"
-            "プロジェクトルート（WeaveCastStudio/）に shared/ ディレクトリが "
-            "存在することを確認してください。"
+            "shared/ module not found.\n"
+            "Please ensure the shared/ directory exists under the project root "
+            "(WeaveCastStudio/)."
         )
         sys.exit(1)
 
-    # 分析済み記事の存在確認
+    # Verify there are analyzed articles to work with
     from store.article_store import ArticleStore
     store = ArticleStore()
     stats = store.get_stats()
     if stats.get("analyzed", 0) == 0:
         logger.error(
-            "分析済み記事がありません。\n"
-            "先に以下を実行してください:\n"
+            "No analyzed articles found.\n"
+            "Please run the following first:\n"
             "  uv run main.py crawl\n"
             "  uv run main.py analyze"
         )
@@ -237,7 +237,7 @@ def cmd_compose(args: argparse.Namespace) -> None:
 
 
 def _compose_briefing(composer, args: argparse.Namespace) -> None:
-    """ブリーフィング動画生成"""
+    """Generate full briefing video"""
     try:
         result = composer.compose(hours=args.hours, dry_run=args.dry_run)
     except RuntimeError as e:
@@ -263,12 +263,12 @@ def _compose_briefing(composer, args: argparse.Namespace) -> None:
             size_mb = video.stat().st_size / 1024 / 1024
             logger.info(f"Video: {video} ({size_mb:.1f} MB)")
         else:
-            logger.error("動画ファイルが生成されませんでした")
+            logger.error("Video file was not generated")
             sys.exit(1)
 
 
 def _compose_short_clips(composer, args: argparse.Namespace, store) -> None:
-    """ショートクリップ生成"""
+    """Generate short clips"""
     article_ids = None
     if args.limit is not None:
         top_articles = store.get_top_articles(limit=args.limit, hours=args.hours)
@@ -302,21 +302,21 @@ def _compose_short_clips(composer, args: argparse.Namespace, store) -> None:
     if args.dry_run:
         logger.info("dry_run complete. To generate clips: uv run main.py compose --short-clips")
     elif result["succeeded"] == 0:
-        logger.error("ショートクリップが1件も生成されませんでした")
+        logger.error("No short clips were generated")
         sys.exit(1)
     else:
         logger.info(f"{result['succeeded']}/{result['total']} clips generated.")
 
 
 def cmd_schedule(args: argparse.Namespace) -> None:
-    """定期巡回スケジューラ"""
+    """Periodic crawl scheduler"""
     from scheduler.crawl_scheduler import CrawlScheduler
 
     logger.info("=== Scheduler ===")
     scheduler = CrawlScheduler()
 
     if args.duration:
-        # 動作確認モード: 指定秒数後に自動停止
+        # Test mode: auto-stop after the specified number of seconds
         logger.info(f"Test mode: running for {args.duration}s")
         scheduler.start()
 
@@ -337,12 +337,12 @@ def cmd_schedule(args: argparse.Namespace) -> None:
         scheduler.stop()
         logger.info("Scheduler stopped cleanly")
     else:
-        # デーモンモード: Ctrl+C まで常駐
+        # Daemon mode: run until Ctrl+C
         scheduler.run_forever()
 
 
 def cmd_pipeline(args: argparse.Namespace) -> None:
-    """crawl_all → analyze → compose 一括実行"""
+    """Run crawl_all → analyze → compose in one shot"""
     from scheduler.crawl_scheduler import CrawlScheduler
     from analyst.gemini_analyst import GeminiAnalyst
     from store.article_store import ArticleStore
@@ -350,14 +350,14 @@ def cmd_pipeline(args: argparse.Namespace) -> None:
 
     logger.info("=== Pipeline: crawl → analyze → compose ===")
 
-    # ── Step 1: 全ソース巡回 ──
+    # ── Step 1: Crawl all sources ──
     logger.info("[1/3] Crawling all sources...")
     scheduler = CrawlScheduler()
     results = scheduler.crawl_all_now()
     total_crawled = sum(len(v) for v in results.values())
     logger.info(f"  Crawled: {total_crawled} articles from {len(results)} sources")
 
-    # ── Step 2: 未分析記事を分析 ──
+    # ── Step 2: Analyze unanalyzed articles ──
     logger.info("[2/3] Analyzing unanalyzed articles...")
     store = ArticleStore()
     unanalyzed = store.get_unanalyzed(limit=50)
@@ -370,7 +370,7 @@ def cmd_pipeline(args: argparse.Namespace) -> None:
     else:
         logger.info("  No unanalyzed articles")
 
-    # ── Step 3: ブリーフィング生成 ──
+    # ── Step 3: Generate briefing ──
     logger.info("[3/3] Composing briefing...")
     composer = BriefingComposer()
     try:
@@ -392,18 +392,18 @@ def cmd_pipeline(args: argparse.Namespace) -> None:
 
 
 # ══════════════════════════════════════════════
-# ヘルパー
+# Helpers
 # ══════════════════════════════════════════════
 
 
 def _load_sources(config_path: str = "config/sources.yaml") -> list[dict]:
-    """sources.yaml を読み込む"""
+    """Load sources from sources.yaml"""
     with open(config_path, encoding="utf-8") as f:
         return yaml.safe_load(f)["sources"]
 
 
 def _print_db_stats(stats: dict) -> None:
-    """DB統計をログ出力（--debug時のみ呼ばれる）"""
+    """Print DB statistics to log (called only when --debug is set)"""
     logger.info("[DB STATS]")
     logger.info(f"  Total    : {stats['total']}")
     logger.info(f"  Analyzed : {stats['analyzed']}")
@@ -413,7 +413,7 @@ def _print_db_stats(stats: dict) -> None:
 
 
 def _print_crawl_debug(articles: list[dict], store, source_id: str) -> None:
-    """巡回結果のデバッグ出力"""
+    """Print crawl results for debug output"""
     for i, a in enumerate(articles):
         logger.info(
             f"  [{i}] {a['title'][:70]}\n"
@@ -434,7 +434,7 @@ def _print_crawl_debug(articles: list[dict], store, source_id: str) -> None:
 
 
 # ══════════════════════════════════════════════
-# エントリポイント
+# Entry point
 # ══════════════════════════════════════════════
 
 
@@ -445,41 +445,41 @@ def main() -> None:
     )
     parser.add_argument(
         "--debug", action="store_true",
-        help="デバッグ出力を有効にする（DB統計、詳細ログ等）",
+        help="Enable debug output (DB stats, detailed logs, etc.)",
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="サブコマンド")
+    subparsers = parser.add_subparsers(dest="command", help="Subcommand")
 
     # ── crawl ──
-    p_crawl = subparsers.add_parser("crawl", help="ソース巡回 + DB保存")
-    p_crawl.add_argument("--source", default="un_news", help="巡回するソースID")
-    p_crawl.add_argument("--all", action="store_true", help="全ソース一括巡回")
-    p_crawl.add_argument("--list-sources", action="store_true", help="登録ソース一覧を表示")
+    p_crawl = subparsers.add_parser("crawl", help="Crawl sources and save to DB")
+    p_crawl.add_argument("--source", default="un_news", help="Source ID to crawl")
+    p_crawl.add_argument("--all", action="store_true", help="Crawl all sources at once")
+    p_crawl.add_argument("--list-sources", action="store_true", help="List registered sources")
 
     # ── analyze ──
-    p_analyze = subparsers.add_parser("analyze", help="Gemini 分析")
-    p_analyze.add_argument("--limit", type=int, default=20, help="最大分析件数")
+    p_analyze = subparsers.add_parser("analyze", help="Run Gemini analysis")
+    p_analyze.add_argument("--limit", type=int, default=20, help="Max number of articles to analyze")
 
     # ── compose ──
-    p_compose = subparsers.add_parser("compose", help="ブリーフィング / クリップ生成")
-    p_compose.add_argument("--dry-run", action="store_true", help="原稿のみ生成")
-    p_compose.add_argument("--short-clips", action="store_true", help="ショートクリップモード")
-    p_compose.add_argument("--hours", type=int, default=720, help="対象期間（時間）")
-    p_compose.add_argument("--limit", type=int, default=None, help="生成数上限")
+    p_compose = subparsers.add_parser("compose", help="Generate briefing / short clips")
+    p_compose.add_argument("--dry-run", action="store_true", help="Generate script only (skip video)")
+    p_compose.add_argument("--short-clips", action="store_true", help="Short clip mode")
+    p_compose.add_argument("--hours", type=int, default=720, help="Time window for articles (hours)")
+    p_compose.add_argument("--limit", type=int, default=None, help="Max number of clips to generate")
 
     # ── schedule ──
-    p_schedule = subparsers.add_parser("schedule", help="定期巡回スケジューラ")
+    p_schedule = subparsers.add_parser("schedule", help="Periodic crawl scheduler")
     p_schedule.add_argument("--duration", type=int, default=None,
-                            help="自動停止までの秒数（省略時はCtrl+Cまで常駐）")
+                            help="Seconds before auto-stop (omit for daemon mode until Ctrl+C)")
 
     # ── pipeline ──
-    p_pipeline = subparsers.add_parser("pipeline", help="crawl → analyze → compose 一括実行")
-    p_pipeline.add_argument("--dry-run", action="store_true", help="compose を dry_run で実行")
-    p_pipeline.add_argument("--hours", type=int, default=720, help="compose の対象期間（時間）")
+    p_pipeline = subparsers.add_parser("pipeline", help="Run crawl → analyze → compose in one shot")
+    p_pipeline.add_argument("--dry-run", action="store_true", help="Run compose in dry_run mode")
+    p_pipeline.add_argument("--hours", type=int, default=720, help="Time window for compose (hours)")
 
     args = parser.parse_args()
 
-    # ── ロギング設定 ──
+    # ── Logging setup ──
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(
         level=log_level,
@@ -490,7 +490,7 @@ def main() -> None:
         parser.print_help()
         sys.exit(0)
 
-    # ── サブコマンド実行 ──
+    # ── Dispatch subcommand ──
     commands = {
         "crawl": cmd_crawl,
         "analyze": cmd_analyze,

@@ -238,6 +238,27 @@ GOOGLE_API_KEY=your_api_key_here
 LANGUAGE=ja   # Japanese output
 ```
 
+#### M3-specific language behaviour
+
+`GeminiClient` resolves `LANGUAGE` on instantiation and exposes it as `self.language` (a `LanguageConfig` with `bcp47_code` and `prompt_lang`). All M3 components that generate user-facing text read this value from the client — no extra configuration is needed.
+
+| Field | Language |
+|-------|----------|
+| `summary` | Output language (set by `LANGUAGE`) |
+| `importance_reason` | Output language (set by `LANGUAGE`) |
+| Briefing script | Output language (set by `LANGUAGE`) |
+| Short clip script | Output language (set by `LANGUAGE`) |
+| `topics` | **English always** (for consistent downstream filtering) |
+| `key_entities` | **English always** (for consistent downstream filtering) |
+| Log messages / internal IDs | **English always** |
+
+> **Customising M3 prompts for your content vertical:**
+> `compe_M3/analyst/gemini_analyst.py` contains `_ANALYSIS_PROMPT_TEMPLATE` and
+> `compe_M3/composer/briefing_composer.py` contains `generate_m3_script` and
+> `_generate_short_clip_script`.  Both files include a `NOTE FOR MAINTAINERS`
+> comment block explaining what to adjust (scoring guide, topic examples, tone)
+> when deploying for a specialist audience such as finance, sports, or local news.
+
 YouTube upload (M1 Phase 5) additionally requires OAuth2 credentials — see `compe_M1/README.md`.
 
 ## Topic Configuration (`topics.yaml`)
@@ -349,6 +370,9 @@ Python, google-genai SDK, Gemini Live API, Gemini 2.5 Flash, Google Grounding, D
 - [x] ~~**Unified config**: `.env` consolidated to project root, no longer duplicated.~~
 - [x] ~~**Shared modules**: `compe_M1/agents/` moved to top-level `shared/`, eliminating cross-platform symlink issues.~~
 - [x] ~~**Multilingual output**: All source code comments, docstrings, and log messages converted to English. `LANGUAGE` (BCP-47) added to `.env`; `shared/language_utils.py` handles Live API ↔ prompt conversion automatically.~~
+- [x] ~~**M3 code English**: All M3 docstrings, inline comments, prompts, and CLI help strings converted to English. `GeminiClient` now resolves `LANGUAGE` on init (`self.language`) and passes it to analyst and composer prompts. Text output fields (`summary`, `importance_reason`, scripts) are generated in the configured language; structured fields (`topics`, `key_entities`) remain in English.~~
+- [x] ~~**M3 general-purpose prompts**: `gemini_analyst.py` and `briefing_composer.py` prompts rewritten for general news content creators (YouTubers, independent journalists). Removed OSINT/military-specific framing. Each prompt file contains a `NOTE FOR MAINTAINERS` comment with guidance for customising to a specialist vertical.~~
+- [ ] **M3 prompt tuning**: Default prompts in `gemini_analyst.py` (`_ANALYSIS_PROMPT_TEMPLATE`) and `briefing_composer.py` (`generate_m3_script`, `_generate_short_clip_script`) are intentionally general-purpose. If deploying for a specific content vertical (finance, sports, local politics, etc.), edit the scoring guide, topic examples, and tone instructions in those files.
 - [ ] **GCE→GCS sync script**: The `gcp/` directory references sync but no dedicated push script is committed. Document or add the cron-based `gcloud storage rsync` commands.
 - [ ] **CI/CD**: No automated tests or linting configured yet.
 - [ ] **content_index.py docs**: Document the shared content registry schema used between M1/M3 (producers) and M4 (consumer).

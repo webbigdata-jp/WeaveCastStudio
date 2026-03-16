@@ -1,13 +1,13 @@
 """
 analyst/gemini_client.py
 
-google-genai SDK の低レベルラッパー。
-- Client の初期化（GOOGLE_API_KEY は .env から自動ロード）
-- generate_content の薄いラッパー（リトライ・タイムアウト）
-- JSON レスポンス取得ヘルパー
+Low-level wrapper around the google-genai SDK.
+- Client initialisation (GOOGLE_API_KEY and LANGUAGE loaded automatically from .env)
+- Thin wrapper around generate_content (with retry and timeout)
+- JSON response helper
 
-M3 内の他モジュールはこのクライアントを経由して Gemini を呼び出す。
-5B (Grounding/Search)・5C (Image) は将来このモジュールに追加する。
+All other M3 modules call Gemini through this client.
+5B (Grounding/Search) and 5C (Image) will be added here in future.
 """
 
 import json
@@ -23,27 +23,28 @@ from google.genai import types
 
 logger = logging.getLogger(__name__)
 
-# デフォルトモデル
+# Default model
 DEFAULT_TEXT_MODEL = "gemini-2.5-flash-lite"
 
-# リトライ設定
+# Retry settings
 _MAX_RETRIES = 3
 _RETRY_DELAY_SEC = 2.0
 
 
 def _load_env(env_path: str | None = None) -> None:
     """
-    .env ファイルから環境変数をロードする（python-dotenv 非依存の簡易実装）。
-    既に環境変数が設定済みの場合は上書きしない。
+    Load environment variables from a .env file (no python-dotenv dependency).
+    Existing environment variables are never overwritten.
 
     Args:
-        env_path: .env ファイルのパス。None の場合は以下の順で探索:
-                  1. プロジェクトルート（WeaveCastStudio/）/.env  ← 推奨
-                  2. カレントディレクトリ/.env
-                  3. config/.env（後方互換）
-                  4. ../config/.env（後方互換）
+        env_path: explicit path to a .env file. When None, the following
+                  locations are tried in order:
+                  1. Project root (WeaveCastStudio/)/.env  ← recommended
+                  2. Current working directory/.env
+                  3. config/.env  (legacy)
+                  4. ../config/.env  (legacy)
     """
-    # プロジェクトルート = このファイルの2階層上（compe_M3/analyst/ → WeaveCastStudio/）
+    # Project root = two levels above this file (compe_M3/analyst/ → WeaveCastStudio/)
     _project_root = Path(__file__).resolve().parent.parent.parent
 
     candidates = (
@@ -75,12 +76,15 @@ def _load_env(env_path: str | None = None) -> None:
 
 class GeminiClient:
     """
-    google-genai SDK の薄いラッパー。
-    インスタンス化時に GOOGLE_API_KEY を環境変数から読み込む。
+    Thin wrapper around the google-genai SDK.
+    Reads GOOGLE_API_KEY and LANGUAGE from environment variables on instantiation.
 
     Usage:
         client = GeminiClient()
         result = client.generate_json(prompt="...", model="gemini-2.5-flash")
+
+    The resolved language config is available as client.language for use in
+    prompt construction (e.g. instructing the model to respond in a specific language).
     """
 
     def __init__(self, env_path: str | None = None):
@@ -88,14 +92,26 @@ class GeminiClient:
         api_key = os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             raise EnvironmentError(
-                "GOOGLE_API_KEY が見つかりません。"
-                ".env ファイルまたは環境変数を確認してください。"
+                "GOOGLE_API_KEY not found. "
+                "Please check your .env file or environment variables."
             )
         self._client = genai.Client(api_key=api_key)
-        logger.debug("[GeminiClient] Initialized")
+
+        # Resolve LANGUAGE from .env via shared language_utils
+        import sys
+        _project_root = Path(__file__).resolve().parent.parent.parent
+        if str(_project_root) not in sys.path:
+            sys.path.insert(0, str(_project_root))
+        from shared.language_utils import get_language_config
+        self.language = get_language_config()
+
+        logger.debug(
+            f"[GeminiClient] Initialized "
+            f"(language={self.language.bcp47_code} / {self.language.prompt_lang})"
+        )
 
     # ──────────────────────────────────────────
-    # 公開インターフェース
+    # Public interface
     # ──────────────────────────────────────────
 
     def generate_text(
@@ -107,18 +123,18 @@ class GeminiClient:
         max_output_tokens: int = 4096,
     ) -> str:
         """
-        テキスト生成。レスポンスの .text を返す。
+        Generate text and return response.text.
 
         Args:
-            prompt: ユーザープロンプト
-            model: 使用するモデル名
-            system_instruction: システムプロンプト（任意）
-            temperature: サンプリング温度
-            max_output_tokens: 最大出力トークン数
+            prompt: user prompt
+            model: model name to use
+            system_instruction: optional system prompt
+            temperature: sampling temperature
+            max_output_tokens: maximum output token count
         Returns:
-            str: 生成テキスト
+            str: generated text
         Raises:
-            RuntimeError: リトライ上限到達時
+            RuntimeError: when retry limit is reached
         """
         config = types.GenerateContentConfig(
             temperature=temperature,
@@ -142,21 +158,21 @@ class GeminiClient:
         max_output_tokens: int = 4096,
     ) -> dict[str, Any]:
         """
-        JSON レスポンスを生成し、dict として返す。
-        response_mime_type="application/json" を指定し、
-        パース失敗時は正規表現でフォールバック抽出を試みる。
+        Generate a JSON response and return it as a dict.
+        Sets response_mime_type="application/json"; falls back to regex
+        extraction if JSON parsing fails.
 
         Args:
-            prompt: ユーザープロンプト（JSON を要求する内容）
-            model: 使用するモデル名
-            system_instruction: システムプロンプト（任意）
-            temperature: サンプリング温度（JSON生成時は低めを推奨）
-            max_output_tokens: 最大出力トークン数
+            prompt: user prompt (should request JSON output)
+            model: model name to use
+            system_instruction: optional system prompt
+            temperature: sampling temperature (low values recommended for JSON)
+            max_output_tokens: maximum output token count
         Returns:
-            dict: パース済み JSON
+            dict: parsed JSON
         Raises:
-            ValueError: JSON パース失敗時
-            RuntimeError: リトライ上限到達時
+            ValueError: when JSON parsing fails
+            RuntimeError: when retry limit is reached
         """
         config = types.GenerateContentConfig(
             temperature=temperature,
@@ -173,7 +189,7 @@ class GeminiClient:
         return self._parse_json(response.text or "")
 
     # ──────────────────────────────────────────
-    # 内部ユーティリティ
+    # Internal utilities
     # ──────────────────────────────────────────
 
     def _call_with_retry(
@@ -183,8 +199,8 @@ class GeminiClient:
         config: types.GenerateContentConfig,
     ) -> types.GenerateContentResponse:
         """
-        generate_content をリトライ付きで呼び出す。
-        レート制限（429）・一時的なサーバーエラー（5xx）に対してリトライする。
+        Call generate_content with retry logic.
+        Retries on rate-limit (429) and transient server errors (5xx).
         """
         last_exc: Exception | None = None
         for attempt in range(1, _MAX_RETRIES + 1):
@@ -220,20 +236,21 @@ class GeminiClient:
     @staticmethod
     def _parse_json(text: str) -> dict[str, Any]:
         """
-        テキストから JSON を抽出してパースする。
-        1. そのままパースを試みる
-        2. ```json ... ``` フェンスを除去してパース
-        3. 最初の { ... } ブロックを正規表現で抽出してパース
+        Extract and parse JSON from text.
+        Attempts in order:
+        1. Direct parse
+        2. Strip ```json ... ``` fences, then parse
+        3. Extract the first { ... } block with regex, then parse
         """
         text = text.strip()
 
-        # 1. 直接パース
+        # 1. Direct parse
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
 
-        # 2. コードフェンス除去
+        # 2. Strip code fences
         fenced = re.sub(r"^```(?:json)?\s*", "", text)
         fenced = re.sub(r"\s*```$", "", fenced).strip()
         try:
@@ -241,7 +258,7 @@ class GeminiClient:
         except json.JSONDecodeError:
             pass
 
-        # 3. 最初の { } ブロックを抽出
+        # 3. Extract first { } block
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if match:
             try:
@@ -249,5 +266,5 @@ class GeminiClient:
             except json.JSONDecodeError:
                 pass
 
-        raise ValueError(f"JSON パースに失敗しました。レスポンス冒頭: {text[:200]!r}")
+        raise ValueError(f"JSON parsing failed. Response prefix: {text[:200]!r}")
 

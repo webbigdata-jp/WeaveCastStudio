@@ -1,19 +1,24 @@
 """
 composer/briefing_composer.py
 
-M3 Phase 3: ブリーフィング動画生成オーケストレーター
+M3 Phase 3: Briefing video generation orchestrator.
 
-処理フロー:
-  1. ArticleStore から分析済み記事を取得
-  2. Gemini で OSINT ブリーフィング原稿を生成
-  3. shared/ (プロジェクトルート) を使って画像生成 → TTS → 動画合成
-  4. data/output/briefing_<timestamp>/ に成果物を保存
+Processing flow:
+  1. Fetch analyzed articles from ArticleStore
+  2. Generate a news briefing script with Gemini
+  3. Use shared/ (project root) for image generation → TTS → video composition
+  4. Save all artifacts to data/output/briefing_<timestamp>/
 
-M1 との差分:
-  - 入力: ArticleStore の分析済み記事群（各国政府見解JSONではなくOSINT記事）
-  - 出力パス: data/output/briefing_<timestamp>/
-  - script_writer は M3 専用プロンプトで再実装（generate_briefing_script は使わない）
-  - image_generator / narrator / video_composer は shared/ 経由で M1 と共通利用
+Differences from M1:
+  - Input:  analyzed articles from ArticleStore (not government-statement JSON)
+  - Output: data/output/briefing_<timestamp>/
+  - Script generation uses an M3-specific prompt (not generate_briefing_script)
+  - image_generator / narrator / video_composer are shared with M1 via shared/
+
+Language behaviour:
+  The briefing script and short-clip scripts are generated in the language
+  configured via LANGUAGE in .env.  All log messages and internal identifiers
+  remain in English.
 """
 
 import json
@@ -22,7 +27,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# プロジェクトルートを sys.path に追加（shared/, content_index の import 用）
+# Add project root to sys.path (for shared/ and content_index imports)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -34,25 +39,25 @@ from google import genai
 from analyst.gemini_client import GeminiClient
 from store.article_store import ArticleStore
 
-# shared/ はプロジェクトルート直下の共通モジュール
+# shared/ lives directly under the project root — common modules shared with M1
 from shared.image_generator import generate_title_slide, generate_content_images
 from shared.narrator import generate_narration
 from shared.video_composer import compose_video
 
 logger = logging.getLogger(__name__)
 
-# ブリーフィングに使用する記事の上限
+# Maximum number of articles used in one briefing
 _MAX_ARTICLES = 12
 
-# 原稿生成モデル
+# Model for script generation
 _SCRIPT_MODEL = "gemini-2.5-flash-lite"
 
-# 出力ルートディレクトリ
+# Root output directory
 _OUTPUT_ROOT = Path("data/output")
 
 
 def _make_output_dir() -> Path:
-    """実行単位の出力ディレクトリを作成して返す"""
+    """Create and return a timestamped output directory for this run"""
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     out = _OUTPUT_ROOT / f"briefing_{ts}"
     (out / "images").mkdir(parents=True, exist_ok=True)
@@ -63,10 +68,10 @@ def _make_output_dir() -> Path:
 
 def _build_m3_briefing_data(articles: list[dict]) -> dict:
     """
-    ArticleStore の分析済み記事群を M3 ブリーフィング用の中間構造に変換する。
+    Convert analyzed ArticleStore articles into the M3 briefing intermediate structure.
 
-    M1 の briefing_data（各国政府見解）とは異なり、
-    M3 では OSINT 記事を importance_score 降順で並べたセクション構造にする。
+    Unlike M1's briefing_data (government statements), M3 arranges articles
+    as sections sorted by importance_score descending.
     """
     sections = []
     for a in articles:
@@ -84,7 +89,7 @@ def _build_m3_briefing_data(articles: list[dict]) -> dict:
             "has_actionable_intel": bool(a.get("has_actionable_intel")),
         })
 
-    # importance_score 降順でソート
+    # Sort by importance_score descending
     sections.sort(key=lambda x: x["importance_score"], reverse=True)
 
     return {
@@ -95,7 +100,7 @@ def _build_m3_briefing_data(articles: list[dict]) -> dict:
 
 
 def _parse_json_field(value, default):
-    """SQLite から取得した JSON 文字列フィールドをパースする"""
+    """Parse a JSON string field retrieved from SQLite"""
     if isinstance(value, (list, dict)):
         return value
     if isinstance(value, str):
@@ -113,17 +118,22 @@ def generate_m3_script(
     user_instruction: str | None = None,
 ) -> str:
     """
-    M3 OSINT ブリーフィング用の原稿を生成する。
-    M1 の generate_briefing_script とは別実装（OSINT向けプロンプト）。
+    Generate a M3 news briefing script.
+    Separate implementation from M1's generate_briefing_script
+    (general-purpose news prompt rather than government-statement prompt).
+
+    The script is written in the language configured via LANGUAGE in .env.
 
     Args:
-        gemini_client: GeminiClient インスタンス
-        briefing_data: _build_m3_briefing_data() の出力
-        focus_topics: 注目するトピック（例: ["military", "humanitarian"]）
-        user_instruction: 追加指示（将来の M4 連携用）
+        gemini_client: GeminiClient instance
+        briefing_data: output of _build_m3_briefing_data()
+        focus_topics: topics to emphasise (e.g. ["economy", "environment"])
+        user_instruction: additional free-text instruction (reserved for M4 integration)
     Returns:
-        [IMAGE: ...] マーカー付きの原稿テキスト
+        Script text with [IMAGE: ...] markers between sections
     """
+    output_lang = gemini_client.language.prompt_lang
+
     focus_str = (
         f"\nFocus especially on these topics: {', '.join(focus_topics)}"
         if focus_topics else ""
@@ -133,30 +143,42 @@ def generate_m3_script(
         if user_instruction else ""
     )
 
-    prompt = f"""You are a professional OSINT intelligence briefing anchor for YouTube channel.
-Write a 5-8 minute news briefing script based on the following intelligence reports.
+    # -------------------------------------------------------------------
+    # NOTE FOR MAINTAINERS:
+    # This prompt targets a general YouTube / independent news audience.
+    # Adjust tone, structure, and word-count targets to suit your channel.
+    # The {output_lang} placeholder is filled at runtime from .env LANGUAGE.
+    # -------------------------------------------------------------------
+    prompt = f"""You are a professional news presenter writing a script for a YouTube news briefing.
+Write a 5-8 minute video script based on the following news articles.
+The ENTIRE script — every word the presenter speaks — MUST be written in {output_lang}.
 
-INTELLIGENCE REPORTS (sorted by importance):
+NEWS ARTICLES (sorted by importance score, highest first):
 {json.dumps(briefing_data["sections"], indent=2, ensure_ascii=False)}
 {focus_str}
 {instruction_str}
 
-SCRIPT REQUIREMENTS:
-- Open with a 2-sentence situation overview summarizing the top developments
-- Cover the top 5-7 stories, ordered by importance_score
-- For each story: mention the source name and credibility tier, give 2-3 sentences of analysis
-- Flag any items with has_actionable_intel=true with "ACTIONABLE INTELLIGENCE:" prefix
-- Group stories by topics where natural (military, humanitarian, diplomatic)
-- Close with a 2-sentence outlook
+SCRIPT STRUCTURE:
+1. Opening (2 sentences): greet the audience and summarise today's top stories
+2. Main stories (top 5-7 by importance_score):
+   - State the headline clearly
+   - Give 2-3 sentences of context and significance
+   - Mention the source name so viewers know where the information comes from
+   - If has_actionable_intel is true, flag it as a developing story worth following
+3. Group thematically where it flows naturally
+4. Closing (2 sentences): brief outlook or call-to-action (like/subscribe prompt is fine)
+
+TONE & STYLE:
+- Accessible and engaging — suitable for a general online audience
+- Balanced and factual; do not editorialize beyond what the sources support
 - Total word count: 700-1000 words
-- Professional, measured BBC World Service tone
-- Write in English only
+- Write ENTIRELY in {output_lang}; do NOT mix languages
 
 IMAGE MARKERS:
-Insert [IMAGE: description] markers between paragraphs (NOT mid-sentence) at these points:
-- After opening overview: [IMAGE: OSINT Intelligence Briefing title card with StoryWire branding]
-- After every 2nd story: [IMAGE: infographic or visualization relevant to the story just covered]
-- Before closing: [IMAGE: Summary dashboard showing top stories with importance scores]
+Insert [IMAGE: description] between paragraphs (never mid-sentence) at these points:
+- After the opening: [IMAGE: News briefing title card with today's date]
+- After every 2nd story: [IMAGE: relevant graphic or infographic for the story just covered]
+- Before the closing: [IMAGE: summary card listing today's top headlines]
 
 Output the script text only. No preamble, no markdown formatting."""
 
@@ -176,19 +198,29 @@ def _generate_short_clip_script(
     article: dict,
 ) -> str:
     """
-    記事1件から30秒ショートクリップ用の原稿を生成する。
+    Generate a 30-second short clip script from a single article.
 
-    構成: headline 1文 + detail 2文 + closing 1文（計75語固定）
-    画像マーカーは挿入しない（短尺は1枚固定のため不要）。
+    Structure: 1 headline + 2 detail sentences + 1 closing (≈75 words total).
+    No image markers — short clips use a single fixed image.
+
+    The script is written in the language configured via LANGUAGE in .env.
 
     Args:
-        gemini_client: GeminiClient インスタンス
-        article: ArticleStore から取得した分析済み記事 dict
+        gemini_client: GeminiClient instance
+        article: analyzed article dict from ArticleStore
     Returns:
-        75語程度の原稿テキスト（画像マーカーなし）
+        4-sentence script (~75 words), no image markers
     """
-    prompt = f"""You are a professional OSINT news anchor for YouTube channel.
-Write a 30-second news clip script (exactly 4 sentences, ~75 words) for the following article.
+    output_lang = gemini_client.language.prompt_lang
+
+    # -------------------------------------------------------------------
+    # NOTE FOR MAINTAINERS:
+    # Adjust word count, sentence count, or tone to match your channel format.
+    # {output_lang} is resolved at runtime from .env LANGUAGE.
+    # -------------------------------------------------------------------
+    prompt = f"""You are a professional news presenter writing a short video script for YouTube.
+Write a 30-second news clip script (exactly 4 sentences, approximately 75 words) for the article below.
+The ENTIRE script MUST be written in {output_lang}.
 
 ARTICLE:
 Title: {article.get("title", "")}
@@ -197,18 +229,17 @@ Summary: {article.get("summary", "")}
 Topics: {", ".join(_parse_json_field(article.get("topics"), []))}
 Key entities: {", ".join(_parse_json_field(article.get("key_entities"), []))}
 Importance score: {article.get("importance_score", 5.0):.1f}/10
-Actionable intel: {article.get("has_actionable_intel", False)}
 
-SCRIPT STRUCTURE (strictly 4 sentences):
-1. HEADLINE sentence — state the core development in one punchy sentence
-2. DETAIL sentence 1 — provide the key context or background
-3. DETAIL sentence 2 — add the most important implication or next development
-4. CLOSING sentence — brief forward-looking statement or significance
+SCRIPT STRUCTURE (strictly 4 sentences, all in {output_lang}):
+1. HEADLINE — state the core development in one clear, punchy sentence
+2. CONTEXT — provide the key background or cause
+3. SIGNIFICANCE — explain the most important implication or next development
+4. CLOSING — a brief forward-looking statement or viewer call-to-action
 
 REQUIREMENTS:
-- Total word count: 70-80 words (targeting 75)
-- Professional BBC World Service tone
-- English only
+- Total word count: 70-80 words (target 75)
+- Friendly and accessible tone suitable for a general online audience
+- Write ENTIRELY in {output_lang}; do NOT mix languages
 - No image markers, no markdown, no preamble
 - Output the 4-sentence script only"""
 
@@ -225,7 +256,9 @@ REQUIREMENTS:
 
 class BriefingComposer:
     """
-    M3 ブリーフィング動画生成のオーケストレーター。
+    Orchestrates M3 briefing video generation.
+
+    Scripts are generated in the language set by LANGUAGE in .env.
 
     Usage:
         composer = BriefingComposer()
@@ -236,7 +269,7 @@ class BriefingComposer:
     def __init__(self, env_path: str | None = None):
         self._gemini = GeminiClient(env_path=env_path)
         self._store = ArticleStore()
-        # M1 agents は genai.Client を直接受け取るため raw client も保持
+        # M1 shared agents expect a raw genai.Client, so keep a reference
         self._raw_client: genai.Client = self._gemini._client
 
     def compose(
@@ -247,38 +280,38 @@ class BriefingComposer:
         dry_run: bool = False,
     ) -> dict:
         """
-        ブリーフィング動画を生成して成果物パスを返す。
+        Generate a briefing video and return artifact paths.
 
         Args:
-            hours: 直近何時間の記事を対象にするか
-            focus_topics: 注目トピック（例: ["military", "humanitarian"]）
-            user_instruction: 追加指示（M4 連携用）
-            dry_run: True の場合、原稿生成まで行い動画生成をスキップする
+            hours: look-back window for articles (hours)
+            focus_topics: topics to emphasise (e.g. ["economy", "environment"])
+            user_instruction: additional instruction (reserved for M4 integration)
+            dry_run: if True, generate script only — skip image/audio/video steps
         Returns:
             dict:
                 {
                   "output_dir": str,
                   "script_path": str,
                   "briefing_plan_path": str,
-                  "video_path": str | None,   # dry_run=True の場合は None
+                  "video_path": str | None,   # None when dry_run=True
                   "article_count": int,
                 }
         """
         out_dir = _make_output_dir()
         logger.info(f"[Composer] Output dir: {out_dir}")
 
-        # ── STEP 1: 分析済み記事を取得 ──
+        # ── STEP 1: Fetch analyzed articles ──
         articles = self._store.get_top_articles(
             limit=_MAX_ARTICLES, hours=hours
         )
         if not articles:
             raise RuntimeError(
-                f"直近 {hours} 時間に分析済み記事がありません。"
-                "test_phase1.py → test_phase2.py を先に実行してください。"
+                f"No analyzed articles found in the last {hours} hours. "
+                "Please run: uv run main.py crawl && uv run main.py analyze"
             )
         logger.info(f"[Composer] {len(articles)} articles loaded (top by importance)")
 
-        # ── STEP 2: M3用中間構造に変換 ──
+        # ── STEP 2: Convert to M3 intermediate structure ──
         briefing_data = _build_m3_briefing_data(articles)
         briefing_plan_path = out_dir / "briefing_plan.json"
         briefing_plan_path.write_text(
@@ -287,7 +320,7 @@ class BriefingComposer:
         )
         logger.info(f"[Composer] Briefing plan saved: {briefing_plan_path}")
 
-        # ── STEP 3: 原稿生成 ──
+        # ── STEP 3: Generate script ──
         script = generate_m3_script(
             self._gemini,
             briefing_data,
@@ -298,9 +331,9 @@ class BriefingComposer:
         script_path.write_text(script, encoding="utf-8")
         logger.info(f"[Composer] Script saved: {script_path}")
 
-        # M1 の generate_title_slide が必要とする topic 形式
+        # topic dict format expected by M1's generate_title_slide
         topic = {
-            "title": "OSINT Intelligence Briefing",
+            "title": "News Briefing",
             "timestamp": briefing_data["generated_at"],
         }
 
@@ -316,7 +349,7 @@ class BriefingComposer:
             logger.info("[Composer] dry_run=True: skipping image/audio/video generation")
             return result
 
-        # ── STEP 4: 画像生成（M1 shared 再利用）──
+        # ── STEP 4: Image generation (reusing M1 shared) ──
         logger.info("[Composer] Generating images...")
         title_slide = generate_title_slide(
             self._raw_client, topic, out_dir / "images"
@@ -328,14 +361,14 @@ class BriefingComposer:
             f"[Composer] Images: 1 title + {len(content_slides)} content slides"
         )
 
-        # ── STEP 5: TTS 音声生成（M1 shared 再利用）──
+        # ── STEP 5: TTS narration (reusing M1 shared) ──
         logger.info("[Composer] Generating narration (TTS)...")
         audio_segments = generate_narration(
             self._raw_client, script, out_dir / "audio"
         )
         logger.info(f"[Composer] Audio: {len(audio_segments)} segments")
 
-        # ── STEP 6: 動画合成（M1 shared 再利用）──
+        # ── STEP 6: Video composition (reusing M1 shared) ──
         logger.info("[Composer] Composing video...")
         video_path = compose_video(
             title_slide=title_slide,
@@ -345,32 +378,32 @@ class BriefingComposer:
         )
         logger.info(f"[Composer] Video: {video_path}")
 
-        # 使用した記事を briefing 使用済みにマーク
+        # Mark used articles as consumed by this briefing
         used_ids = [a["id"] for a in articles if a.get("id")]
         self._store.mark_used_in_briefing(used_ids)
 
-        # ── 動画ファイルの存在確認 ──
+        # ── Verify the video file was actually created ──
         if not Path(video_path).exists():
             logger.error(f"[Composer] Video file not found after compose_video(): {video_path}")
-            raise RuntimeError(f"動画ファイルが生成されませんでした: {video_path}")
+            raise RuntimeError(f"Video file was not generated: {video_path}")
 
         result["video_path"] = str(video_path)
 
-        # ── ContentIndex に登録（動画ファイル存在確認済み）──
+        # ── Register in ContentIndex (video file confirmed to exist) ──
         if result["video_path"]:
             mgr = ContentIndexManager()
-            # ブリーフィング全体動画
+            # Full briefing video — collect all topic tags
             all_tags = []
             for a in articles:
                 all_tags.extend(_parse_json_field(a.get("topics"), []))
-            unique_tags = list(dict.fromkeys(all_tags))  # 順序保持重複除去
+            unique_tags = list(dict.fromkeys(all_tags))  # deduplicate preserving order
 
             entry = make_entry(
                 id=f"m3_briefing_{out_dir.name}",
                 module="M3",
                 content_type="video",
-                title=f"OSINT Intelligence Briefing - {datetime.now(timezone.utc).date()}",
-                topic_tags=unique_tags or ["osint", "briefing"],
+                title=f"News Briefing - {datetime.now(timezone.utc).date()}",
+                topic_tags=unique_tags or ["news", "briefing"],
                 importance_score=max(
                     (a.get("importance_score") or 0.0) for a in articles
                 ),
@@ -380,7 +413,7 @@ class BriefingComposer:
             mgr.add_entry(entry)
             logger.info(f"[Composer] ContentIndex registered: {entry['id']}")
 
-        # ── スクリーンショットも個別登録 ──
+        # ── Register individual screenshots in ContentIndex as well ──
         mgr = ContentIndexManager()
         for article in articles:
             shot = article.get("screenshot_path")
@@ -404,7 +437,7 @@ class BriefingComposer:
         return result
 
     # ──────────────────────────────────────────
-    # 短尺クリップ生成（記事1件 → 30秒動画1本）
+    # Short clip generation (1 article → 1 × 30-second video)
     # ──────────────────────────────────────────
 
     def compose_short_clips(
@@ -414,12 +447,12 @@ class BriefingComposer:
         dry_run: bool = False,
     ) -> dict:
         """
-        分析済み記事1件につき30秒のショートクリップを生成する。
+        Generate one 30-second short clip per analyzed article.
 
-        M4から「イランの動画を出して」のように記事単位で検索・再生できるよう、
-        各クリップをContentIndexに個別登録する。
+        Each clip is registered individually in ContentIndex so M4 can search
+        and play them by topic (e.g. "show me a clip about climate").
 
-        出力ディレクトリ: data/output/clips_<timestamp>/
+        Output layout: data/output/clips_<timestamp>/
           clip_001/
             script.txt
             audio/
@@ -427,12 +460,14 @@ class BriefingComposer:
             clip_001.mp4
           clip_002/
             ...
-          clips_manifest.json   ← 全クリップのサマリ
+          clips_manifest.json   ← summary of all clips
+
+        Scripts are written in the language configured via LANGUAGE in .env.
 
         Args:
-            hours: 直近何時間の記事を対象にするか（article_ids指定時は無視）
-            article_ids: 特定記事IDを指定する場合（None=直近hours時間の全記事）
-            dry_run: True の場合、原稿生成まで行い動画生成をスキップする
+            hours: look-back window in hours (ignored when article_ids is set)
+            article_ids: restrict to specific article IDs (None = all within hours)
+            dry_run: if True, generate scripts only — skip video generation
         Returns:
             dict:
                 {
@@ -451,13 +486,13 @@ class BriefingComposer:
                   "succeeded": int,
                 }
         """
-        # ── 出力ディレクトリ ──
+        # ── Output directory ──
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         out_root = _OUTPUT_ROOT / f"clips_{ts}"
         out_root.mkdir(parents=True, exist_ok=True)
         logger.info(f"[ShortClip] Output dir: {out_root}")
 
-        # ── 記事取得 ──
+        # ── Fetch articles ──
         if article_ids:
             articles = [
                 a for a in self._store.get_top_articles(limit=100, hours=hours * 10)
@@ -468,8 +503,8 @@ class BriefingComposer:
 
         if not articles:
             raise RuntimeError(
-                f"直近 {hours} 時間に分析済み記事がありません。"
-                "test_phase1.py → test_phase2.py を先に実行してください。"
+                f"No analyzed articles found in the last {hours} hours. "
+                "Please run: uv run main.py crawl && uv run main.py analyze"
             )
         logger.info(f"[ShortClip] {len(articles)} articles to process")
 
@@ -496,7 +531,7 @@ class BriefingComposer:
             }
 
             try:
-                # ── 原稿生成（75語 / 30秒） ──
+                # ── Script generation (75 words / 30 seconds) ──
                 script = _generate_short_clip_script(self._gemini, article)
                 script_path = clip_dir / "script.txt"
                 script_path.write_text(script, encoding="utf-8")
@@ -506,14 +541,14 @@ class BriefingComposer:
                     clips_result.append(clip_entry)
                     continue
 
-                # ── 画像: スクリーンショットがあればそれを使用、なければタイトルカード生成 ──
+                # ── Image: use existing screenshot if available, otherwise generate title card ──
                 screenshot = article.get("screenshot_path")
                 if screenshot and Path(screenshot).exists():
                     image_path = Path(screenshot)
                     logger.info(f"[ShortClip] Using existing screenshot: {image_path.name}")
                 else:
                     topic_for_slide = {
-                        "title": article.get("title", "OSINT Update"),
+                        "title": article.get("title", "News Update"),
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                     image_path = generate_title_slide(
@@ -526,32 +561,32 @@ class BriefingComposer:
                     self._raw_client, script, clip_dir / "audio"
                 )
 
-                # ── 動画合成（画像1枚 + 音声） ──
+                # ── Video composition (single image + audio) ──
                 video_path = compose_video(
                     title_slide=image_path,
-                    content_slides=[],          # 短尺は1枚のみ
+                    content_slides=[],          # short clips use one image only
                     audio_segments=audio_segments,
                     output_dir=clip_dir,
                 )
                 logger.info(f"[ShortClip] Video: {video_path}")
 
-                # ── 動画ファイルの存在確認 ──
+                # ── Verify video file was created ──
                 if not Path(video_path).exists():
                     logger.error(
                         f"[ShortClip] Video file not found after compose_video(): {video_path}"
                     )
-                    raise RuntimeError(f"動画ファイルが生成されませんでした: {video_path}")
+                    raise RuntimeError(f"Video file was not generated: {video_path}")
 
                 clip_entry["video_path"] = str(video_path)
 
-                # ── ContentIndex 登録（動画ファイル存在確認済み）──
+                # ── Register in ContentIndex (video file confirmed to exist) ──
                 tags = _parse_json_field(article.get("topics"), [])
                 entry = make_entry(
                     id=f"m3_clip_{article['id']}_{ts}",
                     module="M3",
                     content_type="short_clip",
                     title=article.get("title", ""),
-                    topic_tags=tags or ["osint"],
+                    topic_tags=tags or ["news"],
                     importance_score=article.get("importance_score"),
                     video_path=str(video_path),
                     manifest_path=str(clip_dir / "script.txt"),

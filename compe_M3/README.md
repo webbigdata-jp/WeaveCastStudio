@@ -1,8 +1,10 @@
 # M3: Fact Checker / Crawler
 
-**OSINT Intelligence Pipeline — Crawl, Analyze, Compose**
+**News Intelligence Pipeline — Crawl, Analyze, Compose**
 
-M3 crawls trusted news sources (government sites, UN, wire services, OSINT dashboards) on a configurable schedule, stores articles in SQLite, scores their importance with Gemini, and generates briefing videos or short clips for the M4 live broadcast module.
+M3 crawls trusted news sources (government sites, UN, wire services, think tanks, OSINT dashboards) on a configurable schedule, stores articles in SQLite, scores their newsworthiness with Gemini, and generates briefing videos or short clips for the M4 live broadcast module.
+
+Designed for general-purpose news content creators — YouTubers, independent journalists, and broadcast teams — covering any topic. The default prompt set is intentionally broad; see [Customising Prompts](#customising-prompts) to tailor it to a specialist vertical.
 
 ## Architecture
 
@@ -206,8 +208,8 @@ CREATE TABLE articles (
     summary             TEXT,
     importance_score    REAL,                -- 0.0-10.0
     importance_reason   TEXT,
-    topics              TEXT,                -- JSON array ["military", "humanitarian"]
-    key_entities        TEXT,                -- JSON array ["Iran", "CENTCOM"]
+    topics              TEXT,                -- JSON array ["politics", "economy", "environment"]
+    key_entities        TEXT,                -- JSON array ["Person Name", "Organisation", "Location"]
     sentiment           TEXT,                -- positive|negative|neutral|alarming
     has_actionable_intel BOOLEAN,
     ai_image_path       TEXT,
@@ -227,11 +229,11 @@ The scoring rubric passed to Gemini:
 
 | Score | Level | Criteria |
 |-------|-------|----------|
-| 9-10 | Breaking | Immediate military action, leadership changes, mass casualties |
-| 7-8 | High | Significant developments, new fronts, major diplomatic shifts |
-| 5-6 | Medium | Ongoing situation updates, minor skirmishes, routine statements |
-| 3-4 | Low | Background analysis, historical context, opinion pieces |
-| 0-2 | Minimal | Tangential, outdated, or redundant information |
+| 9-10 | Breaking | Major confirmed event, significant policy change, large-scale incident |
+| 7-8 | High | Notable development, new official statement, trending story |
+| 5-6 | Medium | Ongoing situation update, background context, expert opinion |
+| 3-4 | Low | Soft news, editorial, analysis without new facts |
+| 0-2 | Minimal | Tangential, outdated, promotional, or redundant content |
 
 Articles scoring >= 9.0 are automatically flagged as BREAKING by the scheduler and registered in ContentIndex for M4's ticker overlay.
 
@@ -288,13 +290,30 @@ The Windows broadcast station pulls with `pull_from_gcs.ps1 -m3only`.
 
 ## Configuration
 
-### Environment Variable
+### Environment Variables
 
-M3 requires `GOOGLE_API_KEY` set in the project root `.env` file:
+M3 requires both `GOOGLE_API_KEY` and `LANGUAGE` set in the project root `.env` file:
 
 ```
 GOOGLE_API_KEY=your_gemini_api_key
+LANGUAGE=ja        # BCP-47 code: ja, en, ko, zh, fr, de, es, ...
 ```
+
+`GeminiClient` resolves `LANGUAGE` on instantiation and exposes it as `self.language` (a `LanguageConfig` with `bcp47_code` and `prompt_lang`). All components that generate user-facing text read the language from the client automatically — no extra configuration is needed per component.
+
+#### Language output behaviour
+
+| Field | Language |
+|-------|----------|
+| `summary` | Output language (set by `LANGUAGE`) |
+| `importance_reason` | Output language (set by `LANGUAGE`) |
+| Briefing script | Output language (set by `LANGUAGE`) |
+| Short clip script | Output language (set by `LANGUAGE`) |
+| `topics` | **English always** (for consistent downstream filtering) |
+| `key_entities` | **English always** (for consistent downstream filtering) |
+| Log messages / internal IDs | **English always** |
+
+If `LANGUAGE` is not set, M3 defaults to `en` / English. Unsupported BCP-47 codes also fall back to English with a warning log.
 
 The `GeminiClient` searches for `.env` in this order:
 1. `WeaveCastStudio/.env` (project root — recommended)
@@ -309,6 +328,22 @@ The `GeminiClient` searches for `.env` in this order:
 | GeminiAnalyst | `gemini-2.5-flash` | Article analysis (summary, scoring) |
 | BriefingComposer | `gemini-2.5-flash-lite` | Script generation (briefing & clips) |
 | GeminiClient default | `gemini-2.5-flash-lite` | General text/JSON generation |
+
+## Customising Prompts
+
+The default prompts are written for a general news audience. Each prompt file contains a `NOTE FOR MAINTAINERS` comment block that describes exactly what to change for a specialist vertical.
+
+| File | What to customise |
+|------|-------------------|
+| `analyst/gemini_analyst.py` — `_ANALYSIS_PROMPT_TEMPLATE` | Scoring guide criteria, `topics` example values, system role description |
+| `composer/briefing_composer.py` — `generate_m3_script` | Script structure, word count, tone, channel branding |
+| `composer/briefing_composer.py` — `_generate_short_clip_script` | Sentence count, word count, tone |
+
+**Example verticals:**
+
+- **Finance / markets**: Change scoring guide to weight earnings, rate decisions, and regulatory news. Add `topics` examples like `"earnings"`, `"markets"`, `"regulation"`.
+- **Sports**: Prioritise match results and transfer news. Adjust tone to match-report style.
+- **Local news**: Lower the bar for "Breaking" (city council decisions, local incidents). Restrict `sources.yaml` to regional outlets.
 
 ## Cron Setup (GCE)
 

@@ -1,6 +1,6 @@
 sources:
 
-  # === Tier 1: 公式政府・国際機関 (credibility: 5/5) ===
+  # === Tier 1: Official government and international bodies (credibility: 5/5) ===
   - id: us_war_dept
     name: "U.S. Department of Defense"
     url: "https://www.defense.gov/News/"
@@ -11,7 +11,7 @@ sources:
     crawl_interval_min: 15
     selectors:
       news_links: "a[href*='/News/News-Releases/'], a[href*='/News/Transcripts/'], a[href*='/News/Speeches/']"
-    notes: "defense.gov（war.govはまだ存在しないため代替）"
+    notes: "defense.gov (war.gov does not exist yet; using this as substitute)"
 
   - id: centcom
     name: "U.S. Central Command"
@@ -45,9 +45,9 @@ sources:
     crawl_interval_min: 60
     selectors:
       news_links: "a[href*='/emergencies/'], a[href*='/situations/']"
-    notes: "難民データ。更新頻度低いため巡回間隔長め"
+    notes: "Refugee data — infrequent updates; long crawl interval is intentional"
 
-  # === Tier 2: 高信頼メディア・通信社 (credibility: 4/5) ===
+  # === Tier 2: High-credibility media and wire services (credibility: 4/5) ===
   - id: reuters_mideast
     name: "Reuters Middle East"
     url: "https://www.reuters.com/world/middle-east/"
@@ -80,9 +80,9 @@ sources:
     crawl_interval_min: 5
     selectors:
       news_links: "a[href*='/news/liveblog/']"
-    notes: "最も更新頻度が高い英語ライブブログ"
+    notes: "Highest update frequency among English live blogs"
 
-  # === Tier 3: 専門分析機関・OSINT (credibility: 3-4/5) ===
+  # === Tier 3: Specialist analysis and OSINT (credibility: 3-4/5) ===
   - id: critical_threats
     name: "Critical Threats / ISW"
     url: "https://www.criticalthreats.org/analysis"
@@ -93,7 +93,7 @@ sources:
     crawl_interval_min: 30
     selectors:
       news_links: "a[href*='/analysis/']"
-    notes: "最も分析が厳密。日次レポートを公開"
+    notes: "Most rigorous analysis; publishes daily reports"
 
   - id: understanding_war
     name: "Understanding War (ISW)"
@@ -116,4 +116,4 @@ sources:
     crawl_interval_min: 10
     selectors:
       news_links: null
-    notes: "地図ベースOSINT。TOPページキャプチャのみ"
+    notes: "Map-based OSINT dashboard — top-page screenshot capture only"

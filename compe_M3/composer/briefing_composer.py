@@ -32,15 +32,14 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from content_index import ContentIndexManager, make_entry
-
-from google import genai
-
 from analyst.gemini_client import GeminiClient
+from google import genai
 from store.article_store import ArticleStore
 
+from content_index import ContentIndexManager, make_entry
+
 # shared/ lives directly under the project root — common modules shared with M1
-from shared.image_generator import generate_title_slide, generate_content_images
+from shared.image_generator import generate_content_images, generate_title_slide
 from shared.narrator import generate_narration
 from shared.video_composer import compose_video
 

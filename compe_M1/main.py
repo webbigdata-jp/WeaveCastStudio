@@ -32,21 +32,19 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from shared.source_collector import collect_all_topics
-from shared.summarizer import generate_structured_summary
-from shared.script_writer import generate_briefing_script, generate_clip_scripts
-from shared.image_generator import (
-    generate_title_slide,
-    generate_news_lineup_image,
-    generate_content_images,
-    generate_briefing_images,
-    generate_clip_image,
-)
-from shared.narrator import generate_narration
-from shared.video_composer import compose_video
-
 # ContentIndex
 from content_index import ContentIndexManager, make_entry
+from shared.image_generator import (
+    generate_briefing_images,
+    generate_clip_image,
+    generate_news_lineup_image,
+    generate_title_slide,
+)
+from shared.narrator import generate_narration
+from shared.script_writer import generate_briefing_script, generate_clip_scripts
+from shared.source_collector import collect_all_topics
+from shared.summarizer import generate_structured_summary
+from shared.video_composer import compose_video
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(

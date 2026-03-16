@@ -44,7 +44,6 @@ import logging
 import sys
 import time
 from pathlib import Path
-from threading import Event
 
 import yaml
 
@@ -140,15 +139,15 @@ def _crawl_all(args: argparse.Namespace) -> None:
 
 def cmd_analyze(args: argparse.Namespace) -> None:
     """Run Gemini analysis on unanalyzed articles"""
-    from analyst.gemini_client import GeminiClient
     from analyst.gemini_analyst import GeminiAnalyst
+    from analyst.gemini_client import GeminiClient
     from store.article_store import ArticleStore
 
     logger.info("=== Analyze Articles ===")
 
     # Verify GeminiClient can initialise
     try:
-        client = GeminiClient()
+        GeminiClient()
     except EnvironmentError as e:
         logger.error(f"GeminiClient init failed: {e}")
         sys.exit(1)
@@ -343,10 +342,10 @@ def cmd_schedule(args: argparse.Namespace) -> None:
 
 def cmd_pipeline(args: argparse.Namespace) -> None:
     """Run crawl_all → analyze → compose in one shot"""
-    from scheduler.crawl_scheduler import CrawlScheduler
     from analyst.gemini_analyst import GeminiAnalyst
-    from store.article_store import ArticleStore
     from composer.briefing_composer import BriefingComposer
+    from scheduler.crawl_scheduler import CrawlScheduler
+    from store.article_store import ArticleStore
 
     logger.info("=== Pipeline: crawl → analyze → compose ===")
 
@@ -426,7 +425,7 @@ def _print_crawl_debug(articles: list[dict], store, source_id: str) -> None:
     _print_db_stats(stats)
 
     unanalyzed = store.get_unanalyzed(limit=5)
-    logger.info(f"[UNANALYZED (top 5)]")
+    logger.info("[UNANALYZED (top 5)]")
     for a in unanalyzed:
         logger.info(f"  id={a['id']} | {a['title'][:60]}")
 

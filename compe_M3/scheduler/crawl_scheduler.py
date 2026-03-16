@@ -35,7 +35,6 @@ from threading import Event
 import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-
 from crawler.drission_crawler import DrissionCrawler
 from store.article_store import ArticleStore
 
@@ -265,7 +264,7 @@ class CrawlScheduler:
         for article in articles:
             score = article.get("importance_score") or 0.0
             if score >= 9.0 and article.get("screenshot_path"):
-                tags = _parse_json_field(article.get("topics"), [])
+                tags = self._parse_json_field(article.get("topics"), [])
                 entry = make_entry(
                     id=f"m3_breaking_{article['source_id']}_{article['id']}",
                     module="M3",
@@ -301,4 +300,25 @@ class CrawlScheduler:
             if s["id"] == source_id:
                 return s
         return None
+
+    @staticmethod
+    def _parse_json_field(value: object, default: object = None) -> object:
+        """
+        JSON文字列またはそのままのオブジェクトをPythonオブジェクトに変換する。
+
+        Args:
+            value:   DBから取得した値（JSON文字列 or リスト/dict or None）
+            default: パース失敗時や値がNoneのときに返すデフォルト値
+        Returns:
+            パース済みオブジェクト、または default
+        """
+        if value is None:
+            return default
+        if not isinstance(value, str):
+            return value
+        import json
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return default
 

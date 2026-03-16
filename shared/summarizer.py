@@ -7,6 +7,7 @@ Structures per-topic information as "topic × per-country reactions".
 import json
 import logging
 from datetime import datetime, timezone
+
 from google import genai
 from google.genai import types
 

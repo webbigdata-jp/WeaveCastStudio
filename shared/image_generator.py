@@ -9,13 +9,14 @@ Model: gemini-3-pro-image-preview
 Output language for captions is controlled by LANGUAGE in .env.
 """
 
-import re
 import logging
+import re
 from io import BytesIO
 from pathlib import Path
-from PIL import Image
+
 from google import genai
 from google.genai import types
+from PIL import Image
 
 from .language_utils import get_language_config
 
@@ -173,8 +174,9 @@ def _parse_image_type(desc: str) -> tuple[str, str]:
     """
     Parse image type and description from '[IMAGE: TYPE: description]' format.
     Returns ("KEYPOINTS", original_desc) if the type is not recognised.
-    """
     valid_types = {"MAP", "STANCE", "TIMELINE", "VERSUS", "KEYPOINTS"}
+    """
+    
     match = re.match(r'^(MAP|STANCE|TIMELINE|VERSUS|KEYPOINTS)\s*:\s*(.+)$', desc.strip(), re.IGNORECASE)
     if match:
         return match.group(1).upper(), match.group(2).strip()
@@ -376,7 +378,7 @@ def _build_briefing_image_prompt(
     lang = get_language_config()
 
     topic_title = section.get("topic", topic.get("title_en", "News"))
-    summary = section.get("summary", "")
+    #summary = section.get("summary", "")
     countries = section.get("countries", [])
     analysis = section.get("analysis", {})
 

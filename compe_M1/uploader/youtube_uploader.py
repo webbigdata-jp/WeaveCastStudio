@@ -13,12 +13,13 @@ Quota: 1 video upload = 1,600 units / default daily quota = 10,000 units.
 
 import logging
 from pathlib import Path
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-from googleapiclient.errors import HttpError
+
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaFileUpload
 
 logger = logging.getLogger(__name__)
 

@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
-from DrissionPage import ChromiumPage, ChromiumOptions
+from DrissionPage import ChromiumOptions, ChromiumPage
 
 logger = logging.getLogger(__name__)
 

@@ -5,10 +5,11 @@ Combines image slideshow + narration audio -> MP4 (1920x1080, H.264, AAC).
 Dependencies: ffmpeg (system install required), pydub.
 """
 
-import subprocess
 import logging
+import subprocess
 import tempfile
 from pathlib import Path
+
 from pydub import AudioSegment
 
 logger = logging.getLogger(__name__)

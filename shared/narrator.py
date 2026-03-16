@@ -10,11 +10,12 @@ Gemini TTS auto-detects language from the text, so prompting in the
 target language is sufficient.
 """
 
+import logging
 import re
 import time
 import wave
-import logging
 from pathlib import Path
+
 from google import genai
 from google.genai import types
 

@@ -355,8 +355,8 @@ Python, google-genai SDK, Gemini Live API, Gemini 2.5 Flash, Google Grounding, D
 - [ ] **M3 プロンプトチューニング**: `gemini_analyst.py`（`_ANALYSIS_PROMPT_TEMPLATE`）と `briefing_composer.py`（`generate_m3_script`・`_generate_short_clip_script`）のデフォルトプロンプトは汎用設計になっています。金融・スポーツ・地域政治など特定の専門分野向けにデプロイする場合は、これらのファイル内のスコアリングガイド・トピック例・トーン指示を編集してください。
 - [x] **GCE→GCS 同期スクリプト**: `gcp/sync_to_gcs.sh` が M1/M3 の出力と `content_index.json` を cron ベースで GCS にプッシュします。
 - [x] **content_index.py ドキュメント**: スキーマリファレンスとモジュール別インテグレーションガイドは `docs/content_index.md` を参照してください。
-- [ ] **CI/CD**: 自動テスト・リントの設定はまだありません。
+- [x] **CI/CD**: 自動テスト・リントの設定はまだありません。
 
 ## ライセンス
 
-*未定*
+Apache-2.0 license

@@ -43,8 +43,8 @@ class TestM1:
         spec = importlib.util.spec_from_file_location(
             "compe_m1_main", ROOT / "compe_M1" / "main.py"
         )
-        mod = importlib.util.module_from_spec(spec)
-        mod = ""
+        #mod = importlib.util.module_from_spec(spec)
+
         # 実行はしない — import (spec.loader.exec_module) レベルの確認
         assert spec is not None
 

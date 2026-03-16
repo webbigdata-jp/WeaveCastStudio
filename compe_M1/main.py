@@ -381,13 +381,30 @@ def run_phase5(dirs: OutputDirs, topics: list[dict]) -> None:
 
     mgr = ContentIndexManager()
 
+    # クリップ原稿を先に読み込む（全体ブリーフィングの概要生成にも使う）
+    clip_scripts_data = []
+    clip_scripts_path = dirs.data / "clip_scripts.json"
+    if clip_scripts_path.exists():
+        clip_scripts_data = load_json(clip_scripts_path)
+
     # 全体ブリーフィング動画
     video_path = manifest["artifacts"].get("video")
     if video_path and Path(video_path).exists():
         entry_id = f"m1_{ts}"
+        # 概要: 各クリップのタイトルと日付
+        date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        clip_titles = [
+            c.get("topic_title", f"トピック{i+1}")
+            for i, c in enumerate(clip_scripts_data)
+        ]
+        briefing_desc = f"{date_str} 国際情勢ブリーフィング。"
+        if clip_titles:
+            briefing_desc += "含まれるトピック: " + " / ".join(clip_titles)
+
         entry = make_entry(
             id=entry_id, module="M1", content_type="video",
-            title=f"国際情勢ブリーフィング {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+            title=f"国際情勢ブリーフィング {date_str}",
+            description=briefing_desc,
             topic_tags=topic_tags + ["briefing", "full"],
             importance_score=max((t.get("importance_score", 7) for t in topics), default=7),
             video_path=video_path,
@@ -399,10 +416,6 @@ def run_phase5(dirs: OutputDirs, topics: list[dict]) -> None:
 
     # クリップ動画
     clip_videos = manifest["artifacts"].get("clip_videos", [])
-    clip_scripts_data = []
-    clip_scripts_path = dirs.data / "clip_scripts.json"
-    if clip_scripts_path.exists():
-        clip_scripts_data = load_json(clip_scripts_path)
 
     for i, clip_path in enumerate(clip_videos):
         if not Path(clip_path).exists():
@@ -410,10 +423,17 @@ def run_phase5(dirs: OutputDirs, topics: list[dict]) -> None:
         topic_info = topics[i] if i < len(topics) else {}
         clip_info = clip_scripts_data[i] if i < len(clip_scripts_data) else {}
 
+        # 概要: clip_scripts.json の script テキスト（長すぎる場合は先頭300文字）
+        clip_script_text = clip_info.get("script", "")
+        clip_desc = clip_script_text[:300]
+        if len(clip_script_text) > 300:
+            clip_desc += "..."
+
         entry_id = f"m1_{ts}_clip_{i+1:03d}"
         entry = make_entry(
             id=entry_id, module="M1", content_type="video",
             title=clip_info.get("topic_title", topic_info.get("title", f"クリップ{i+1}")),
+            description=clip_desc,
             topic_tags=topic_info.get("tags", []) + ["clip"],
             importance_score=topic_info.get("importance_score", 7.0),
             video_path=clip_path,
@@ -427,9 +447,17 @@ def run_phase5(dirs: OutputDirs, topics: list[dict]) -> None:
     lineup_path = manifest["artifacts"].get("news_lineup")
     if lineup_path and Path(lineup_path).exists():
         entry_id = f"m1_{ts}_lineup"
+        # 概要: トピック一覧
+        lineup_desc = "本日のニューストピック一覧画像。"
+        if clip_scripts_data:
+            lineup_titles = [c.get("topic_title", "") for c in clip_scripts_data if c.get("topic_title")]
+            if lineup_titles:
+                lineup_desc += "トピック: " + " / ".join(lineup_titles)
+
         entry = make_entry(
             id=entry_id, module="M1", content_type="image",
             title=f"本日のニュース一覧 {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+            description=lineup_desc,
             topic_tags=["lineup", "index"] + topic_tags,
             importance_score=10.0,
             screenshot_path=lineup_path,

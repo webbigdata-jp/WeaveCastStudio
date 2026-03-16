@@ -130,7 +130,7 @@ def generate_m3_script(
         if user_instruction else ""
     )
 
-    prompt = f"""You are a professional OSINT intelligence briefing anchor for StoryWire.
+    prompt = f"""You are a professional OSINT intelligence briefing anchor for YouTube channel.
 Write a 5-8 minute news briefing script based on the following intelligence reports.
 
 INTELLIGENCE REPORTS (sorted by importance):
@@ -184,7 +184,7 @@ def _generate_short_clip_script(
     Returns:
         75語程度の原稿テキスト（画像マーカーなし）
     """
-    prompt = f"""You are a professional OSINT news anchor for StoryWire.
+    prompt = f"""You are a professional OSINT news anchor for YouTube channel.
 Write a 30-second news clip script (exactly 4 sentences, ~75 words) for the following article.
 
 ARTICLE:

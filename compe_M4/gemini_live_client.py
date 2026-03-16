@@ -50,6 +50,7 @@ from breaking_news_server import (
     poll_article_store,
     DEFAULT_PORT as TICKER_PORT,
 )
+from monitor.trump_monitor import TrumpMonitor
 
 
 # ── Add project root to sys.path ──────────────────────────────────
@@ -540,9 +541,7 @@ class GeminiLiveClient:
             "context_window_compression": types.ContextWindowCompressionConfig(
                 sliding_window=types.SlidingWindow(),
             ),
-            "speech_config": types.SpeechConfig(
-                language_code=_LANG.bcp47_code,
-            ),
+            "speech_config": types.SpeechConfig(),
         }
 
     async def _task_ptt_mic(self):
@@ -845,10 +844,23 @@ async def _main():
         f"Breaking News ticker started: http://127.0.0.1:{TICKER_PORT}/overlay"
     )
 
+    # ── Start Trump Truth Social monitor ──
+    trump_monitor = TrumpMonitor(
+        db_path=_DB_PATH,
+        api_key=API_KEY,
+        lang=_LANG,
+    )
+    trump_monitor.start()
+    logger.info("[TrumpMonitor] Background monitor started (interval=300s)")
+
     client = GeminiLiveClient(window, content_list, today_titles, image_asset_mgr)
     try:
         await client.run()
     finally:
+        # Stop Trump monitor
+        trump_monitor.stop()
+        logger.info("[TrumpMonitor] Background monitor stopped")
+
         # Stop ticker
         ticker_poll_task.cancel()
         try:

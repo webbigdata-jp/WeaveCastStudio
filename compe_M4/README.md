@@ -32,8 +32,15 @@ During an OBS live stream, the journalist speaks voice commands and Gemini AI au
 │  │  ┌────────────────┐   │    ┌──────────▼────────────────────┐  │
 │  │  │ MediaWindow     │   │    │  ArticleStore (SQLite)        │  │
 │  │  │ tkinter + VLC   │   │    │  ← compe_M3/data/articles.db  │  │
-│  │  └────────────────┘   │    └───────────────────────────────┘  │
-│  └──────────────────────┘                                        │
+│  │  └────────────────┘   │    └──────────▲────────────────────┘  │
+│  │                        │               │                       │
+│  │  ┌────────────────┐   │    ┌──────────┴────────────────────┐  │
+│  │  │ TrumpMonitor    │───┼───▶│  monitor/trump_monitor.py     │  │
+│  │  │ (background     │   │    │  poll trumpstruth.org (5min)  │  │
+│  │  │  thread)        │   │    │  → Gemini judge               │  │
+│  │  └────────────────┘   │    │  → mark_breaking() if score   │  │
+│  │                        │    │    >= 7.5                      │  │
+│  └──────────────────────┘    └───────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -44,6 +51,7 @@ During an OBS live stream, the journalist speaks voice commands and Gemini AI au
 3. **gemini_live_client.py** loads ContentIndex and ArticleStore at startup
 4. Journalist presses **F9 (PTT)** to give voice commands → Gemini responds via Function Calling
 5. **MediaWindow** displays video/images, **ticker server** streams breaking news
+6. **TrumpMonitor** (background thread) polls trumpstruth.org every 5 minutes, judges posts via Gemini, and injects breaking news into ArticleStore automatically
 
 ## File Structure
 
@@ -54,6 +62,11 @@ compe_M4/
 ├── breaking_news_server.py    # HTTP + SSE ticker server
 ├── media_assets.json          # Image asset definitions
 ├── demo_setup.py              # Demo recording data setup script
+├── test_trump_monitor.py      # TrumpMonitor operation test script
+├── trump_monitor_state.json   # TrumpMonitor last-seen status ID (auto-generated)
+├── monitor/                   # Background news monitor modules
+│   ├── __init__.py
+│   └── trump_monitor.py       # Truth Social polling + Gemini judge
 ├── overlay/
 │   └── ticker.html            # OBS browser source (ticker display)
 ├── assets/                    # Image asset files
@@ -139,7 +152,8 @@ On startup, the following happens automatically:
 3. Load playable content list from ContentIndex
 4. Launch MediaWindow (tkinter) in a separate thread
 5. Start Breaking News ticker server at `http://localhost:8765`
-6. Connect to Gemini Live API and enter PTT standby
+6. **Start TrumpMonitor** in a background thread (polls trumpstruth.org every 5 minutes)
+7. Connect to Gemini Live API and enter PTT standby
 
 After startup, the terminal displays the list of playable content and image assets.
 
@@ -265,6 +279,29 @@ Definition file for image assets. `ImageAssetManager` reads this file to manage 
 | `source_url` | No | URL for automatic download on first launch (if empty, place manually) |
 | `topic_tags` | No | Topic tags. Referenced by Gemini when selecting assets |
 
+### monitor/trump_monitor.py
+
+Background thread that polls [trumpstruth.org](https://trumpstruth.org) every 5 minutes and automatically injects new Trump posts into ArticleStore.
+
+**Key features:**
+
+- **Scraping**: Fetches the trumpstruth.org top page with `requests` + `BeautifulSoup`. ReTruths with no body text are automatically skipped.
+- **Deduplication**: Saves the highest `status_id` seen to `trump_monitor_state.json` and only processes posts with a newer ID on each poll.
+- **Gemini judgment**: Sends each new post to `gemini-2.5-flash` to get `importance_score` (0–10), `is_breaking` flag, a one-sentence `summary` (in the configured language), and English `topics`.
+- **Filtering**: Posts with `importance_score < 3.0` are discarded. Posts with `score >= 7.5` are saved with `mark_breaking(True)` and appear as red BREAKING items on the ticker.
+- **Language-aware**: Summary language follows the project-wide `LANGUAGE` setting in `.env`.
+- **Extensible**: Designed as a `threading.Thread` subclass with a consistent interface so additional sources (Reddit, etc.) can be added as sibling modules under `monitor/`.
+
+**State file**: `compe_M4/trump_monitor_state.json` (auto-generated, safe to delete to re-process recent posts)
+
+**Breaking threshold constants** (in `trump_monitor.py`):
+
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `_DEFAULT_INTERVAL` | `300` | Poll interval (seconds) |
+| `_BREAKING_THRESHOLD` | `7.5` | Minimum importance_score for breaking flag |
+| `_JUDGE_MODEL` | `gemini-2.5-flash` | Gemini model used for judgment |
+
 ### demo_setup.py
 
 Data preparation script for demo recording. See [DEMO_SCRIPT.md](DEMO_SCRIPT.md) for details.
@@ -299,6 +336,15 @@ python demo_setup.py --clear-breaking
 | `RECEIVE_RATE` | `24000` | Gemini output sample rate (Hz) |
 | `CHUNK_SIZE` | `1024` | Audio chunk size |
 | `PTT_KEY` | `f9` | PTT key |
+
+### monitor/trump_monitor.py
+
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `_DEFAULT_INTERVAL` | `300` | Poll interval (seconds) |
+| `_BREAKING_THRESHOLD` | `7.5` | Minimum importance_score to mark as breaking |
+| `_JUDGE_MODEL` | `gemini-2.5-flash` | Gemini model for importance judgment |
+| `_REQUEST_TIMEOUT` | `20` | HTTP request timeout (seconds) |
 
 ### breaking_news_server.py
 
@@ -350,6 +396,13 @@ python demo_setup.py --clear-breaking
 - Open `http://localhost:8765/overlay` in a browser to verify display
 - Check that `http://localhost:8765/status` returns JSON
 - See [OBS_SETUP.md](OBS_SETUP.md) for OBS browser source configuration
+
+### TrumpMonitor not working
+
+- Run `python test_trump_monitor.py` from `compe_M4/` to verify scraping and Gemini judgment independently
+- Check terminal logs for `[TrumpMonitor]` lines after launching `gemini_live_client.py`
+- If `trump_monitor_state.json` has a very high `last_status_id`, delete the file to re-process recent posts
+- Verify network access to `https://trumpstruth.org`
 
 ### Permission error with the keyboard module (Linux)
 

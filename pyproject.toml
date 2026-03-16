@@ -22,3 +22,23 @@ dependencies = [
     "python-vlc>=3.0.21203",
     "pyyaml>=6.0.3",
 ]
+
+
+[tool.ruff]
+line-length = 100
+exclude = ["compe_M4"]
+ 
+[tool.ruff.lint]
+# E: pycodestyle errors, F: pyflakes, I: isort
+select = ["E", "F", "I"]
+ignore = ["E501"]
+ 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.6",
+]

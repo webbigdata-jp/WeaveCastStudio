@@ -27,7 +27,7 @@ class TestShared:
 
     def test_language_utils_returns_config(self):
         from shared.language_utils import get_language_config
-        cfg = get_language_config("ja")
+        cfg = get_language_config()
         assert cfg is not None
 
     def test_content_index_importable(self):

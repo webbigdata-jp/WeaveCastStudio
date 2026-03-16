@@ -21,7 +21,7 @@ compe_M4/demo_setup.py
   # ブレーキングニュースを即時差し込み（別ターミナルから）
   python demo_setup.py --trigger-breaking
 
-  # ブレーキングニュースを解除（別ターミナルから）
+  # ブレーキングニュースを削除してデモ初期状態に戻す（別ターミナルから）
   python demo_setup.py --clear-breaking
 """
 
@@ -265,15 +265,41 @@ def trigger_breaking(db_path: str):
 
 
 def clear_breaking(db_path: str):
-    """全てのブレーキングフラグを解除する。"""
+    """ブレーキングニュース記事をDBから削除する。
+
+    trigger_breaking() で追加した記事を URL をキーにして完全削除する。
+    これにより、ティッカーの通常ニュース欄からも消える。
+    """
+    import sqlite3
+
+    # まずフラグだけ先に解除（ポーリングで即座に速報扱いが消える）
     store = ArticleStore(db_path=db_path)
     breaking = store.get_breaking()
     if breaking:
         ids = [a["id"] for a in breaking]
         store.mark_breaking(ids, False)
         logger.info(f"速報フラグ解除: {len(ids)} 件")
-    else:
-        logger.info("解除対象の速報なし")
+
+    # BREAKING_ARTICLES の URL をキーにして記事自体を削除
+    breaking_urls = [a["url"] for a in BREAKING_ARTICLES]
+    if not breaking_urls:
+        logger.info("削除対象の速報記事なし")
+        return
+
+    conn = sqlite3.connect(db_path)
+    try:
+        placeholders = ",".join("?" for _ in breaking_urls)
+        cursor = conn.execute(
+            f"DELETE FROM articles WHERE url IN ({placeholders})",
+            breaking_urls,
+        )
+        deleted = cursor.rowcount
+        conn.commit()
+        logger.info(f"速報記事を DB から削除: {deleted} 件")
+    except Exception as e:
+        logger.error(f"速報記事の削除に失敗: {e}")
+    finally:
+        conn.close()
 
 
 # ══════════════════════════════════════════════════════════════════

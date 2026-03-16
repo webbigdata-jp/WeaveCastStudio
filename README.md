@@ -355,8 +355,8 @@ Python, google-genai SDK, Gemini Live API, Gemini 2.5 Flash, Google Grounding, D
 - [ ] **M3 prompt tuning**: Default prompts in `gemini_analyst.py` (`_ANALYSIS_PROMPT_TEMPLATE`) and `briefing_composer.py` (`generate_m3_script`, `_generate_short_clip_script`) are intentionally general-purpose. If deploying for a specific content vertical (finance, sports, local politics, etc.), edit the scoring guide, topic examples, and tone instructions in those files.
 - [x] **GCE→GCS sync script**: `gcp/sync_to_gcs.sh` handles cron-based push of M1/M3 output and `content_index.json` to GCS.
 - [x] **content_index.py docs**: See `docs/content_index.md` for the full schema reference and module integration guide.
-- [ ] **CI/CD**: No automated tests or linting configured yet.
+- [x] **CI/CD**: No automated tests or linting configured yet.
 
 ## License
 
-*TBD*
+Apache-2.0 license

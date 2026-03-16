@@ -28,11 +28,11 @@ The system consists of four modules split across two environments:
 
 ```
 GCE (M1/M3)  ──→  GCS Bucket  ──→  Windows PC (M4)
-  cron jobs        gcloud rsync       pull_from_gcs.ps1
+  cron jobs        gcloud rsync       pull_from_gcs.py
 ```
 
 M1 and M3 run on cron, push results (videos, images, JSON, SQLite DB) to a GCS bucket.
-The Windows broadcast station pulls them with `pull_from_gcs.ps1` before going live.
+The Windows broadcast station pulls them with `pull_from_gcs.py` before going live.
 M4 reads the local data and serves it during the broadcast.
 
 ## Prerequisites
@@ -53,7 +53,7 @@ WeaveCastStudio/
 ├── .env                       # GOOGLE_API_KEY + LANGUAGE (git-ignored, shared by all modules)
 ├── .env.sample                # Template for .env
 ├── content_index.py           # Shared module: content registry for M1/M3 → M4
-├── pull_from_gcs.ps1          # Windows: pull GCS data to local
+├── pull_from_gcs.py           # Windows: pull GCS data to local (merges content_index.json)
 ├── pyproject.toml             # uv project definition
 │
 ├── shared/                    # Common pipeline modules for M1/M3
@@ -75,7 +75,8 @@ WeaveCastStudio/
 │
 ├── gcp/                       # GCE deployment guides & sync scripts
 │   ├── README.md              # English deploy guide
-│   └── README_ja.md           # Japanese deploy guide
+│   ├── README_ja.md           # Japanese deploy guide
+│   └── sync_to_gcs.sh         # GCE→GCS push script (run via cron)
 │
 ├── compe_M1/                  # Module M1: Data Collection & Video Generation
 │   ├── main.py                # Pipeline entry point (--phase 1..5)
@@ -167,7 +168,7 @@ cp .env.sample .env
 # Edit .env: set GOOGLE_API_KEY and LANGUAGE
 
 # Pull data from GCS
-.\pull_from_gcs.ps1
+python pull_from_gcs.py
 
 # Set up OBS (see compe_M4/OBS_SETUP.md)
 
@@ -184,19 +185,19 @@ python gemini_live_client.py
 
 ### 3. Data Sync (GCE → GCS → Windows)
 
-**GCE → GCS** is handled by scripts in `gcp/` (run via cron or manually with `gcloud storage rsync`).
+**GCE → GCS** is handled by `gcp/sync_to_gcs.sh` (run via cron or manually).
 
 **GCS → Windows:**
 
-```powershell
+```bash
 # Pull all data
-.\pull_from_gcs.ps1
+python pull_from_gcs.py
 
 # Pull M3 only
-.\pull_from_gcs.ps1 -m3only
+python pull_from_gcs.py --m3only
 
 # Pull M1 only
-.\pull_from_gcs.ps1 -m1only
+python pull_from_gcs.py --m1only
 ```
 
 ## Environment Variables
@@ -352,9 +353,9 @@ Python, google-genai SDK, Gemini Live API, Gemini 2.5 Flash, Google Grounding, D
 ## TODO
 
 - [ ] **M3 prompt tuning**: Default prompts in `gemini_analyst.py` (`_ANALYSIS_PROMPT_TEMPLATE`) and `briefing_composer.py` (`generate_m3_script`, `_generate_short_clip_script`) are intentionally general-purpose. If deploying for a specific content vertical (finance, sports, local politics, etc.), edit the scoring guide, topic examples, and tone instructions in those files.
-- [ ] **GCE→GCS sync script**: The `gcp/` directory references sync but no dedicated push script is committed. Document or add the cron-based `gcloud storage rsync` commands.
+- [x] **GCE→GCS sync script**: `gcp/sync_to_gcs.sh` handles cron-based push of M1/M3 output and `content_index.json` to GCS.
+- [x] **content_index.py docs**: See `docs/content_index.md` for the full schema reference and module integration guide.
 - [ ] **CI/CD**: No automated tests or linting configured yet.
-- [ ] **content_index.py docs**: Document the shared content registry schema used between M1/M3 (producers) and M4 (consumer).
 
 ## License
 

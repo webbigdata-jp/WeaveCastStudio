@@ -51,12 +51,12 @@ sync_m1() {
 sync_shared() {
     log "=== Shared files sync start ==="
 
-    # source_index.json（ルート直下）
-    if [ -f "$BASE_DIR/source_index.json" ]; then
-        log "Uploading source_index.json ..."
+    # content_index.json（ルート直下）
+    if [ -f "$BASE_DIR/content_index.json" ]; then
+        log "Uploading content_index.json ..."
         gcloud storage cp \
-            "$BASE_DIR/source_index.json" \
-            "$BUCKET/source_index.json"
+            "$BASE_DIR/content_index.json" \
+            "$BUCKET/content_index.json"
     fi
 
     log "=== Shared files sync done ==="

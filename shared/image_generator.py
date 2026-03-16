@@ -1,11 +1,12 @@
 """
-STEP 5: 画像生成
-- タイトルスライド
-- コンテンツ画像（[IMAGE: ...] マーカー対応）
-- 本日のニュース一覧画像
-- クリップ用個別画像
+Phase 5: Image generation.
+- Title slide
+- Content images (responds to [IMAGE: ...] markers)
+- Today's news lineup image
+- Per-clip images
 
-使用モデル: gemini-3.1-flash-image-preview
+Model: gemini-3-pro-image-preview
+Output language for captions is controlled by LANGUAGE in .env.
 """
 
 import re
@@ -15,6 +16,8 @@ from pathlib import Path
 from PIL import Image
 from google import genai
 from google.genai import types
+
+from .language_utils import get_language_config
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +30,7 @@ PLACEHOLDER_BG_COLOR = (15, 30, 60)
 def _make_placeholder_image(description: str, output_path: Path) -> None:
     img = Image.new("RGB", (1920, 1080), color=PLACEHOLDER_BG_COLOR)
     img.save(str(output_path))
-    logger.info(f"プレースホルダー画像を保存: {output_path}")
+    logger.info(f"Placeholder image saved: {output_path}")
 
 
 def _save_image_from_response(response, output_path: Path) -> bool:
@@ -36,7 +39,7 @@ def _save_image_from_response(response, output_path: Path) -> bool:
             img = Image.open(BytesIO(part.inline_data.data))
             img = _fit_to_1920x1080(img)
             img.save(str(output_path))
-            logger.info(f"画像を保存: {output_path}（{img.size}）")
+            logger.info(f"Image saved: {output_path} ({img.size})")
             return True
     return False
 
@@ -51,8 +54,8 @@ def _fit_to_1920x1080(img: Image.Image) -> Image.Image:
 
 
 def _generate_image(client: genai.Client, prompt: str, output_path: Path, label: str) -> Path:
-    """共通の画像生成処理。失敗時はプレースホルダーを生成。"""
-    logger.info(f"{label} を生成中...")
+    """Shared image generation logic. Falls back to a placeholder on failure."""
+    logger.info(f"Generating {label} ...")
     try:
         response = client.models.generate_content(
             model=IMAGE_MODEL,
@@ -60,10 +63,10 @@ def _generate_image(client: genai.Client, prompt: str, output_path: Path, label:
             config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
         )
         if not _save_image_from_response(response, output_path):
-            logger.warning(f"{label}: 画像パーツなし。プレースホルダーを使用。")
+            logger.warning(f"{label}: no image part in response. Using placeholder.")
             _make_placeholder_image(label, output_path)
     except Exception as e:
-        logger.error(f"{label} 生成失敗: {e}")
+        logger.error(f"{label} generation failed: {e}")
         _make_placeholder_image(label, output_path)
     return output_path
 
@@ -71,7 +74,7 @@ def _generate_image(client: genai.Client, prompt: str, output_path: Path, label:
 def generate_title_slide(
     client: genai.Client, topics: list[dict], output_dir: Path, date_str: str,
 ) -> Path:
-    """タイトルスライド画像を生成する。"""
+    """Generate the title slide image."""
     output_path = output_dir / "slide_title.png"
     prompt = (
         f'Generate a professional news broadcast title card image.\n'
@@ -86,20 +89,22 @@ def generate_title_slide(
         f'- Flat design only: NO people, NO flags, NO photographs\n'
         f'- Use only geometric shapes and text\n'
     )
-    return _generate_image(client, prompt, output_path, "タイトルスライド")
+    return _generate_image(client, prompt, output_path, "title slide")
 
 
 def generate_news_lineup_image(
     client: genai.Client, topics: list[dict], output_dir: Path, date_str: str,
 ) -> Path:
     """
-    「本日のニュース一覧」画像を生成する。
-    M4で最初に表示する用途。
+    Generate the "Today's Headlines" lineup image.
+    Used as the first display item in M4.
     """
+    lang = get_language_config()
     output_path = output_dir / "news_lineup.png"
 
     topic_lines = "\n".join(
-        f"  {i+1}. {t['title']}" for i, t in enumerate(topics)
+        f"  {i+1}. {t.get('title_target_lang', t.get('title_en', ''))}"
+        for i, t in enumerate(topics)
     )
 
     prompt = (
@@ -116,9 +121,9 @@ def generate_news_lineup_image(
         f'- Clean, modern broadcast news graphic\n'
         f'- 16:9 aspect ratio\n'
         f'- Flat design only: NO people, NO photographs\n'
-        f'- Headline text can be in Japanese (as provided above)\n'
+        f'- Headline text is in {lang.prompt_lang} (as provided above)\n'
     )
-    return _generate_image(client, prompt, output_path, "ニュース一覧画像")
+    return _generate_image(client, prompt, output_path, "news lineup image")
 
 
 _BANNED_KEYWORDS = [
@@ -135,48 +140,45 @@ _BANNED_KEYWORDS = [
 
 def _sanitize_description(desc: str) -> str:
     """
-    写実的・扇情的なキーワードを除去し、安全な description に変換する。
-    除去後に内容が崩壊した場合は、固有名詞を抽出してフォールバックする。
+    Remove realistic / sensational keywords from a description.
+    If the result becomes too short, fall back to extracting proper nouns.
     """
     sanitized = desc
     for keyword in _BANNED_KEYWORDS:
-        # ワード境界でマッチ（"building" が "rebuilding" にヒットしないように）
+        # Match on word boundary so "building" doesn't hit "rebuilding"
         pattern = re.compile(r'\b' + re.escape(keyword) + r'(?:s|ing|ed)?\b', re.IGNORECASE)
         sanitized = pattern.sub("", sanitized)
-    # 余分な空白・記号を整理
-    sanitized = re.sub(r"['\"]s\b", "", sanitized)  # 所有格の残骸 "'s" を除去
+    sanitized = re.sub(r"['\"]s\b", "", sanitized)   # remove orphaned possessives "'s"
     sanitized = re.sub(r'\s+', ' ', sanitized).strip()
 
-    # フォールバック判定: 意味のある英単語（2文字以上、冠詞・前置詞除外）が3語未満なら崩壊
+    # Fallback: fewer than 3 meaningful words -> extract proper nouns from original
     stopwords = {"a", "an", "the", "of", "on", "in", "at", "to", "and", "or",
                  "with", "for", "by", "from", "near", "about", "into", "over"}
     meaningful_words = [w for w in sanitized.split() if len(w) > 1 and w.lower() not in stopwords]
     if len(meaningful_words) < 3:
-        # 元のdescから固有名詞（大文字始まりで2文字以上）を抽出
         proper_nouns = re.findall(r'\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)*\b', desc)
-        # "Image", "Portrait" など禁止語由来の固有名詞を除外
         banned_proper = {"Image", "Portrait", "Photo", "Picture", "Soldiers", "Children",
                          "Building", "School", "Aircraft", "Damaged", "Destroyed"}
         proper_nouns = [n for n in proper_nouns if n not in banned_proper]
         if proper_nouns:
-            sanitized = "Key topics: " + ", ".join(dict.fromkeys(proper_nouns))  # 重複排除
+            sanitized = "Key topics: " + ", ".join(dict.fromkeys(proper_nouns))
         else:
             sanitized = "General news summary"
-        logger.info(f"サニタイズ後にフォールバック: '{desc}' → '{sanitized}'")
+        logger.info(f"Sanitize fallback: '{desc}' -> '{sanitized}'")
 
     return sanitized
 
 
 def _parse_image_type(desc: str) -> tuple[str, str]:
     """
-    [IMAGE: TYPE: description] 形式からTYPEとdescriptionを分離する。
-    TYPE が認識できない場合は ("KEYPOINTS", 元のdesc) を返す。
+    Parse image type and description from '[IMAGE: TYPE: description]' format.
+    Returns ("KEYPOINTS", original_desc) if the type is not recognised.
     """
     valid_types = {"MAP", "STANCE", "TIMELINE", "VERSUS", "KEYPOINTS"}
     match = re.match(r'^(MAP|STANCE|TIMELINE|VERSUS|KEYPOINTS)\s*:\s*(.+)$', desc.strip(), re.IGNORECASE)
     if match:
         return match.group(1).upper(), match.group(2).strip()
-    # 旧形式の互換: "Map showing ..." → MAP
+    # Legacy compatibility: "Map showing ..." -> MAP
     desc_lower = desc.lower()
     if desc_lower.startswith("map ") or "map showing" in desc_lower:
         return "MAP", desc
@@ -188,14 +190,13 @@ def _parse_image_type(desc: str) -> tuple[str, str]:
         return "KEYPOINTS", desc
     if "relationship" in desc_lower or "position" in desc_lower or "stance" in desc_lower:
         return "STANCE", desc
-    # デフォルト: KEYPOINTS（最も安全）
+    # Default: KEYPOINTS (safest option)
     return "KEYPOINTS", desc
 
 
 def _build_content_image_prompt(desc: str) -> str:
     """
-    [IMAGE: ...] マーカーの description からTYPEを解析し、
-    幻覚を防ぐ制約付きプロンプトを生成する。
+    Build a hallucination-safe image prompt from an [IMAGE: ...] marker description.
     """
     image_type, raw_desc = _parse_image_type(desc)
     clean_desc = _sanitize_description(raw_desc)
@@ -296,75 +297,73 @@ def _build_content_image_prompt(desc: str) -> str:
 def generate_content_images(
     client: genai.Client, script_text: str, output_dir: Path,
 ) -> list[Path]:
-    """[後方互換] 原稿内の [IMAGE: ...] マーカーから画像を生成する。"""
+    """[Backward-compat] Generate images from [IMAGE: ...] markers in the script."""
     markers = re.findall(r'\[IMAGE:\s*(.*?)\]', script_text)
     if not markers:
-        logger.info("原稿中に画像マーカーなし（generate_briefing_images を使用してください）")
+        logger.info("No image markers found in script (use generate_briefing_images instead).")
         return []
-    logger.info(f"原稿中に{len(markers)}個の画像マーカーを検出")
+    logger.info(f"Found {len(markers)} image marker(s) in script.")
 
     generated = []
     for i, desc in enumerate(markers):
         output_path = output_dir / f"slide_{i:03d}.png"
         prompt = _build_content_image_prompt(desc)
-        _generate_image(client, prompt, output_path, f"コンテンツ画像 {i+1}/{len(markers)}")
+        _generate_image(client, prompt, output_path, f"content image {i+1}/{len(markers)}")
         generated.append(output_path)
     return generated
 
 
-# ── 共通スタイル（日本語プロンプト版） ──
+# ── Common style block (used with target-language prompts) ──────────────────
 
-_COMMON_STYLE_JA = (
-    "\n\n【共通スタイル要件】\n"
-    "- 背景: ダークネイビー (#0F1E3C)\n"
-    "- テキスト色: 白\n"
-    "- アスペクト比: 16:9\n"
-    "- 右下に小さく「WeaveCast」ウォーターマーク\n"
-    "- フラットデザイン・ダイアグラムスタイルのみ\n"
-    "- クリーンでモダンな報道番組風（NHK/BBC風）\n"
-    "\n【絶対禁止】\n"
-    "- 写実的な人物・顔・体・建物・車両・兵器の描写\n"
-    "- プロンプトに記載されていない数値・統計・パーセンテージの捏造\n"
-    "- 感情的・扇情的なイメージ\n"
-    "- 写真やフォトリアリスティックな描写\n"
-    "- 幾何学的図形・アイコン・矢印・テキストボックス・抽象シンボルのみ使用すること\n"
+_COMMON_STYLE = (
+    "\n\n[Common style requirements]\n"
+    "- Background: dark navy (#0F1E3C)\n"
+    "- Text color: white\n"
+    "- Aspect ratio: 16:9\n"
+    "- Small 'WeaveCast' watermark in bottom-right corner\n"
+    "- Flat design, diagram style only\n"
+    "- Clean, modern broadcast news aesthetic (NHK/BBC style)\n"
+    "\n[Absolute prohibitions]\n"
+    "- NO photorealistic people, faces, bodies, buildings, vehicles, or weapons\n"
+    "- NO invented numbers, statistics, or percentages not present in the prompt\n"
+    "- NO emotional or sensational imagery\n"
+    "- NO photographs or photo-like renderings\n"
+    "- Use ONLY geometric shapes, icons, arrows, text boxes, and abstract symbols\n"
 )
 
 
 def _choose_image_type(topic: dict, section: dict) -> str:
-    """
-    トピックとセクションの内容から最適な画像タイプを選択する。
-    """
-    title = (section.get("topic", "") + " " + topic.get("title", "")).lower()
+    """Select the most appropriate image type for a topic/section pair."""
+    title = (section.get("topic", "") + " " + topic.get("title_en", "")).lower()
     tags = [t.lower() for t in topic.get("tags", [])]
     countries = section.get("countries", [])
 
-    # 地理的キーワード → MAP
-    geo_keywords = ["海峡", "hormuz", "封鎖", "blockade", "shipping", "地域", "region"]
+    # Geographic keywords -> MAP
+    geo_keywords = ["hormuz", "blockade", "shipping", "strait", "region", "sea"]
     if any(kw in title for kw in geo_keywords) or "shipping" in tags:
         return "MAP"
 
-    # 軍事・損失系 → KEYPOINTS（STANCEより先に判定）
+    # Military / damage -> KEYPOINTS (checked before STANCE)
     if any(kw in tags for kw in ["military", "damage", "war"]):
         return "KEYPOINTS"
 
-    # 人道系 → KEYPOINTS（STANCEより先に判定）
+    # Humanitarian / civilian -> KEYPOINTS (checked before STANCE)
     if any(kw in tags for kw in ["humanitarian", "civilian"]):
         return "KEYPOINTS"
 
-    # 対立構造が明確 → STANCE
+    # Clear opposing sides -> STANCE
     if len(countries) >= 3:
         stances = [c.get("stance", "") for c in countries]
         if "opposed" in stances and "supportive" in stances:
             return "STANCE"
 
-    # 政治・指導者系 → VERSUS or KEYPOINTS
+    # Political / leadership -> VERSUS or KEYPOINTS
     if any(kw in tags for kw in ["politics", "leadership"]):
         if len(countries) >= 2:
             return "VERSUS"
         return "KEYPOINTS"
 
-    # デフォルト: 国が多ければSTANCE、少なければKEYPOINTS
+    # Default: STANCE for many countries, KEYPOINTS otherwise
     if len(countries) >= 3:
         return "STANCE"
     return "KEYPOINTS"
@@ -373,128 +372,119 @@ def _choose_image_type(topic: dict, section: dict) -> str:
 def _build_briefing_image_prompt(
     topic: dict, section: dict, image_type: str, date_str: str,
 ) -> str:
-    """
-    briefing_dataのセクション情報から画像生成プロンプトを組み立てる。
-    """
-    topic_title = section.get("topic", topic.get("title", "ニュース"))
+    """Build an image generation prompt from structured briefing_data section."""
+    lang = get_language_config()
+
+    topic_title = section.get("topic", topic.get("title_en", "News"))
     summary = section.get("summary", "")
     countries = section.get("countries", [])
     analysis = section.get("analysis", {})
 
     if image_type == "MAP":
-        # 関連する国名をラベルとして抽出
         country_names = [c.get("country", "") for c in countries if c.get("country")]
         labels_list = "\n".join(f"  - {name}" for name in country_names[:6])
         prompt = (
-            f"報道番組風の地図グラフィックを生成してください。\n"
-            f"タイトル: 「{topic_title}」（画像上部に日本語で大きく表示）\n\n"
-            f"【描画する要素（これだけを描くこと）】\n"
-            f"1. シンプルな模式地図（国境線と海岸線のみ）\n"
-            f"2. 関連地域（トピックの中心地）を赤またはオレンジでハイライト\n"
-            f"3. 以下の国名ラベルのみ表示（日本語）:\n{labels_list}\n"
-            f"4. トピックの中心地点に赤い丸マーカーを1つ配置\n\n"
-            f"【絶対に描かないこと】\n"
-            f"- 矢印（国と国を結ぶ矢印、攻撃を示す矢印などすべて禁止）\n"
-            f"- 「STRANDED SHIPS」「OIL PRICES」など追加テキスト\n"
-            f"- 船舶、軍艦、飛行機などのアイコン\n"
-            f"- プロンプトに書かれていないラベルや情報\n"
-            f"- 数値、統計、価格情報\n"
+            f"Generate a broadcast-style schematic map graphic.\n"
+            f"Title: '{topic_title}' (displayed prominently at the top in {lang.prompt_lang})\n\n"
+            f"[Elements to draw — ONLY these]\n"
+            f"1. Simple schematic map (country borders and coastlines only)\n"
+            f"2. Highlight the relevant region in red or orange\n"
+            f"3. Show ONLY the following country labels (in {lang.prompt_lang}):\n{labels_list}\n"
+            f"4. Place one red circle marker at the focal point of the topic\n\n"
+            f"[NEVER draw]\n"
+            f"- Arrows connecting countries (no attack arrows, no directional arrows)\n"
+            f"- Extra text labels not listed above\n"
+            f"- Ship, aircraft, or military icons\n"
+            f"- Numbers, statistics, or price data\n"
         )
 
     elif image_type == "STANCE":
-        # 各国の立場を整理（矢印なしのグリッドレイアウト用）
         stance_entries = []
         for c in countries[:6]:
             name = c.get("country", "?")
             position = c.get("position", "")
             stance = c.get("stance", "neutral")
-            # stance → 色指定
             color_map = {
-                "supportive": "青", "opposed": "赤",
-                "neutral": "灰色", "cautious": "黄色",
+                "supportive": "blue", "opposed": "red",
+                "neutral": "gray",    "cautious": "yellow",
             }
-            color = color_map.get(stance, "灰色")
-            stance_entries.append(f"  - {name}（{color}の丸）: 「{position}」")
-        stances_text = "\n".join(stance_entries) if stance_entries else "  情報なし"
+            color = color_map.get(stance, "gray")
+            stance_entries.append(f"  - {name} ({color} node): '{position}'")
+        stances_text = "\n".join(stance_entries) if stance_entries else "  No data"
 
         prompt = (
-            f"報道番組風の各国立場対比図を生成してください。\n"
-            f"タイトル: 「{topic_title}」（画像上部に日本語で大きく表示）\n\n"
-            f"【描画する要素（これだけを描くこと）】\n"
-            f"以下の各国を丸いノードで表現し、それぞれの立場を日本語テキストで表示:\n"
+            f"Generate a broadcast-style country-stance diagram.\n"
+            f"Title: '{topic_title}' (displayed prominently at the top in {lang.prompt_lang})\n\n"
+            f"[Elements to draw — ONLY these]\n"
+            f"Represent each country below as a circular node and show its stance as text in {lang.prompt_lang}:\n"
             f"{stances_text}\n\n"
-            f"【レイアウト】\n"
-            f"- 各国のノードを横並びまたは格子状に配置\n"
-            f"- 各ノードの下にその国の立場テキストを表示\n"
-            f"- トピック名を中央上部にタイトルとして配置\n\n"
-            f"【絶対に描かないこと】\n"
-            f"- 国と国を結ぶ矢印（矢印は一切使わない）\n"
-            f"- 国旗の描写（シンプルな丸ノードのみ）\n"
-            f"- プロンプトに書かれていない国や情報\n"
-            f"- 数値、統計、引用文\n"
+            f"[Layout]\n"
+            f"- Arrange nodes side by side or in a grid\n"
+            f"- Display each country's stance text below its node\n"
+            f"- Place the topic title as a heading at the top\n\n"
+            f"[NEVER draw]\n"
+            f"- Arrows connecting countries\n"
+            f"- Realistic flag artwork (simple circle nodes only)\n"
+            f"- Countries or information not listed above\n"
+            f"- Numbers, statistics, or quoted text\n"
         )
 
     elif image_type == "VERSUS":
-        # 2者対比（最初の2国）
-        c1 = countries[0] if len(countries) > 0 else {"country": "A国", "position": ""}
-        c2 = countries[1] if len(countries) > 1 else {"country": "B国", "position": ""}
+        c1 = countries[0] if len(countries) > 0 else {"country": "Side A", "position": ""}
+        c2 = countries[1] if len(countries) > 1 else {"country": "Side B", "position": ""}
         prompt = (
-            f"報道番組風の二者対比グラフィックを生成してください。\n"
-            f"タイトル: 「{topic_title}」（画像上部に日本語で大きく表示）\n\n"
-            f"【描画する要素（これだけを描くこと）】\n"
-            f"左側（赤）: {c1.get('country', 'A国')}\n"
-            f"  立場: 「{c1.get('position', '')}」\n"
-            f"右側（青）: {c2.get('country', 'B国')}\n"
-            f"  立場: 「{c2.get('position', '')}」\n\n"
-            f"【レイアウト】\n"
-            f"- 左右に分けたレイアウト（中央に VS の文字と区切り線）\n"
-            f"- 各側に国名と立場テキストを日本語で表示\n\n"
-            f"【絶対に描かないこと】\n"
-            f"- 国と国を結ぶ矢印\n"
-            f"- 国旗の写実的描写\n"
-            f"- プロンプトに書かれていない情報\n"
+            f"Generate a broadcast-style two-sided comparison graphic.\n"
+            f"Title: '{topic_title}' (displayed prominently at the top in {lang.prompt_lang})\n\n"
+            f"[Elements to draw — ONLY these]\n"
+            f"Left side (red): {c1.get('country', 'Side A')}\n"
+            f"  Stance: '{c1.get('position', '')}'\n"
+            f"Right side (blue): {c2.get('country', 'Side B')}\n"
+            f"  Stance: '{c2.get('position', '')}'\n\n"
+            f"[Layout]\n"
+            f"- Split left/right layout with 'VS' and a divider line in the centre\n"
+            f"- Display country names and stance text in {lang.prompt_lang}\n\n"
+            f"[NEVER draw]\n"
+            f"- Arrows connecting the two sides\n"
+            f"- Realistic flag artwork\n"
+            f"- Information not listed above\n"
         )
 
     elif image_type == "KEYPOINTS":
-        # 要点まとめ
         points = []
-        # analysis から合意点・相違点を取得
         consensus = analysis.get("consensus_points", [])
         divergence = analysis.get("divergence_points", [])
         for p in consensus[:2]:
             points.append(f"  {len(points)+1}. {p}")
         for p in divergence[:2]:
             points.append(f"  {len(points)+1}. {p}")
-        # 不足なら各国の position から補完
         if len(points) < 3:
             for c in countries[:3]:
                 points.append(f"  {len(points)+1}. {c.get('country', '')}: {c.get('position', '')}")
-        points_text = "\n".join(points[:5]) if points else "  情報なし"
+        points_text = "\n".join(points[:5]) if points else "  No data"
 
         prompt = (
-            f"報道番組風のキーポイント要約グラフィックを生成してください。\n"
-            f"タイトル: 「{topic_title}」（画像上部に日本語で大きく表示）\n\n"
-            f"【描画する要素（これだけを描くこと）】\n"
-            f"以下の要点を番号付きリストで表示:\n{points_text}\n\n"
-            f"【レイアウト】\n"
-            f"- 各ポイントにシンプルな幾何学アイコン（丸、四角など）とテキスト\n"
-            f"- テキストは日本語\n\n"
-            f"【絶対に描かないこと】\n"
-            f"- プロンプトに書かれていない要点やデータの追加\n"
-            f"- 矢印や関係線\n"
-            f"- 写実的なイラスト\n"
-            f"- 数値・統計の捏造\n"
+            f"Generate a broadcast-style key-points summary graphic.\n"
+            f"Title: '{topic_title}' (displayed prominently at the top in {lang.prompt_lang})\n\n"
+            f"[Elements to draw — ONLY these]\n"
+            f"Display the following points as a numbered list in {lang.prompt_lang}:\n{points_text}\n\n"
+            f"[Layout]\n"
+            f"- Each point paired with a simple geometric icon (circle, square, etc.) and text\n\n"
+            f"[NEVER draw]\n"
+            f"- Points or data not listed above\n"
+            f"- Arrows or relationship lines\n"
+            f"- Realistic illustrations\n"
+            f"- Invented numbers or statistics\n"
         )
 
     else:
         prompt = (
-            f"報道番組風の要約グラフィックを生成してください。\n"
-            f"タイトル: 「{topic_title}」（画像上部に日本語で大きく表示）\n"
-            f"抽象的なアイコンと日本語テキストのみで構成すること。\n"
-            f"プロンプトに書かれていない情報は追加しないこと。\n"
+            f"Generate a broadcast-style summary graphic.\n"
+            f"Title: '{topic_title}' (displayed prominently at the top in {lang.prompt_lang})\n"
+            f"Use only abstract icons and text in {lang.prompt_lang}.\n"
+            f"Do NOT add information not present in this prompt.\n"
         )
 
-    return prompt + _COMMON_STYLE_JA
+    return prompt + _COMMON_STYLE
 
 
 def generate_briefing_images(
@@ -505,62 +495,66 @@ def generate_briefing_images(
     date_str: str,
 ) -> list[Path]:
     """
-    briefing_data（構造化JSON）からトピックごとに画像を生成する。
+    Generate one image per topic section from structured briefing_data.
 
-    [IMAGE:] マーカーに依存せず、briefing_data の各セクションの
-    構造化情報（国名、立場、分析など）を直接使って画像プロンプトを組み立てる。
+    Does not rely on [IMAGE:] markers; instead builds prompts directly from
+    the structured data (country names, stances, analysis, etc.).
 
     Args:
-        client: 初期化済みの genai.Client
-        briefing_data: STEP 3で生成した構造化データ
-        topics: topics.yaml のトピック定義リスト
-        output_dir: 画像保存先ディレクトリ
-        date_str: 日付文字列（例: "March 15, 2026"）
+        client: Initialised genai.Client.
+        briefing_data: Structured data produced in Phase 3.
+        topics: Topic definitions from topics.yaml.
+        output_dir: Directory to save images.
+        date_str: Date string (e.g. "March 15, 2026").
+
     Returns:
-        生成した画像パスのリスト
+        List of generated image paths.
     """
     sections = briefing_data.get("briefing_sections", [])
-    logger.info(f"briefing_dataから{len(sections)}セクションの画像を生成します")
+    logger.info(f"Generating images for {len(sections)} section(s) from briefing_data.")
 
     generated = []
     for i, section in enumerate(sections):
-        # 対応するtopics.yamlのトピック情報を取得
         topic = topics[i] if i < len(topics) else {}
 
         image_type = _choose_image_type(topic, section)
-        topic_title = section.get("topic", topic.get("title", f"トピック{i+1}"))
-        logger.info(f"  セクション{i+1}/{len(sections)} 「{topic_title}」 → {image_type}")
+        topic_title = section.get("topic", topic.get("title_en", f"Topic {i+1}"))
+        logger.info(f"  Section {i+1}/{len(sections)} '{topic_title}' -> {image_type}")
 
         output_path = output_dir / f"slide_{i:03d}.png"
         prompt = _build_briefing_image_prompt(topic, section, image_type, date_str)
-        _generate_image(client, prompt, output_path, f"ブリーフィング画像 {i+1}/{len(sections)} ({image_type})")
+        _generate_image(
+            client, prompt, output_path,
+            f"briefing image {i+1}/{len(sections)} ({image_type})"
+        )
         generated.append(output_path)
 
-    logger.info(f"ブリーフィング画像生成完了: {len(generated)}枚")
+    logger.info(f"Briefing image generation complete: {len(generated)} image(s).")
     return generated
 
 
 def generate_clip_image(
     client: genai.Client, clip: dict, output_path: Path,
 ) -> Path:
-    """ショートクリップ用の画像を1枚生成する。"""
-    topic_title = clip.get("topic_title", "ニュース")
+    """Generate a single title-card image for a short clip."""
+    lang = get_language_config()
+    topic_title = clip.get("topic_title", "News")
     image_prompt = clip.get("image_prompt", "")
 
     prompt = (
-        f"以下のニューストピックのタイトルカード画像を生成してください。\n"
-        f"トピック: {topic_title}\n"
+        f"Generate a title card image for the following news topic.\n"
+        f"Topic: {topic_title}\n"
         f"{image_prompt}\n\n"
-        f"【スタイル要件】\n"
-        f"- ダークネイビー (#0F1E3C) 背景、白テキスト、16:9\n"
-        f"- トピック名を大きく日本語で表示\n"
-        f"- トピックに関連する抽象的なアイコンやシンボル（地図アイコン、国旗アイコン等）を配置\n"
-        f"- フラットデザイン・ダイアグラムスタイルのみ\n"
-        f"- 右下に小さく WeaveCast ウォーターマーク\n"
-        f"\n【絶対禁止】\n"
-        f"- 写実的な人物・建物・風景・兵器の描写\n"
-        f"- 架空の数値・統計データ\n"
-        f"- フォトリアリスティックなスタイル\n"
-        f"- 感情的・扇情的なイメージ\n"
+        f"[Style requirements]\n"
+        f"- Dark navy (#0F1E3C) background, white text, 16:9 aspect ratio\n"
+        f"- Display the topic name prominently in {lang.prompt_lang}\n"
+        f"- Use abstract icons or symbols related to the topic\n"
+        f"- Flat design, diagram style only\n"
+        f"- Small 'WeaveCast' watermark in bottom-right\n"
+        f"\n[Absolute prohibitions]\n"
+        f"- NO photorealistic people, buildings, scenery, or weapons\n"
+        f"- NO invented numbers or statistics\n"
+        f"- NO photo-realistic rendering style\n"
+        f"- NO emotional or sensational imagery\n"
     )
-    return _generate_image(client, prompt, output_path, f"クリップ画像「{topic_title}」")
+    return _generate_image(client, prompt, output_path, f"clip image '{topic_title}'")

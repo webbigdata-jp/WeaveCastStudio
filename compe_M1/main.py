@@ -1,17 +1,17 @@
 """
-WeaveCast M1 パイプライン — メイン実行スクリプト
+WeaveCast M1 pipeline — main entry point.
 
-使い方:
-  python main.py                     # 全トピック一括処理
-  python main.py --topic-index 1     # 特定トピックのみ（後方互換）
-  python main.py --skip-upload       # YouTube アップロードをスキップ
-  python main.py --phase 1           # Phase 1 のみ
-  python main.py --phase 2           # Phase 2 のみ（要 Phase 1 の出力）
-  python main.py --phase 3           # Phase 3 のみ
-  python main.py --phase 4           # Phase 4 のみ
-  python main.py --phase 5           # Phase 5 のみ
+Usage:
+  python main.py                     # Process all topics (phases 1–5)
+  python main.py --topic-index 1     # Process a specific topic only (backward-compat)
+  python main.py --skip-upload       # Skip YouTube upload
+  python main.py --phase 1           # Phase 1 only
+  python main.py --phase 2           # Phase 2 only (requires Phase 1 output)
+  python main.py --phase 3           # Phase 3 only
+  python main.py --phase 4           # Phase 4 only
+  python main.py --phase 5           # Phase 5 only
 
-  --output-dir で既存ディレクトリを再利用:
+  Reuse an existing output directory with --output-dir:
   python main.py --phase 2 --output-dir output/briefing_20260310_172523
 """
 
@@ -27,7 +27,7 @@ import yaml
 from dotenv import load_dotenv
 from google import genai
 
-# プロジェクトルートを sys.path に追加（shared/, content_index の import 用）
+# Add project root to sys.path for shared/ and content_index imports
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -48,7 +48,7 @@ from shared.video_composer import compose_video
 # ContentIndex
 from content_index import ContentIndexManager, make_entry
 
-# ── ロギング ──
+# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -59,11 +59,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("weavecast.main")
 
-# ── パス ──
+# ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
 CONFIG_DIR = BASE_DIR / "config"
 TOPICS_FILE = CONFIG_DIR / "topics.yaml"
-ENV_FILE = _PROJECT_ROOT / ".env"  # プロジェクトルートの .env を使用
+ENV_FILE = _PROJECT_ROOT / ".env"   # Project-root .env shared by all modules
 YT_SECRETS_FILE = CONFIG_DIR / "youtube_client_secrets.json"
 YT_TOKEN_FILE = CONFIG_DIR / "youtube_token.json"
 
@@ -75,7 +75,7 @@ class OutputDirs:
     images: Path
     audio: Path
     video: Path
-    clips: Path  # ★新規
+    clips: Path
 
     @classmethod
     def create(cls, base: Path) -> "OutputDirs":
@@ -89,7 +89,7 @@ class OutputDirs:
         if not root.is_absolute():
             root = BASE_DIR / root
         if not root.exists():
-            raise FileNotFoundError(f"出力ディレクトリが見つかりません: {root}")
+            raise FileNotFoundError(f"Output directory not found: {root}")
         return cls._make(root)
 
     @classmethod
@@ -103,7 +103,7 @@ class OutputDirs:
         return dirs
 
 
-# ── ユーティリティ ──
+# ── Utilities ─────────────────────────────────────────────────────────────────
 
 def load_config() -> dict:
     with open(TOPICS_FILE, "r", encoding="utf-8") as f:
@@ -114,7 +114,9 @@ def load_topics(config: dict, topic_index: int | None = None) -> list[dict]:
     topics = config["topics"]
     if topic_index is not None:
         if topic_index >= len(topics):
-            raise IndexError(f"トピックインデックス {topic_index} が範囲外（0-{len(topics)-1}）")
+            raise IndexError(
+                f"Topic index {topic_index} out of range (0–{len(topics)-1})"
+            )
         return [topics[topic_index]]
     return topics
 
@@ -122,7 +124,7 @@ def load_topics(config: dict, topic_index: int | None = None) -> list[dict]:
 def save_json(data, path: Path) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    logger.info(f"保存完了: {path}")
+    logger.info(f"Saved: {path}")
 
 
 def load_json(path: Path):
@@ -133,7 +135,7 @@ def load_json(path: Path):
 def save_text(text: str, path: Path) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
-    logger.info(f"保存完了: {path}")
+    logger.info(f"Saved: {path}")
 
 
 def load_text(path: Path) -> str:
@@ -141,61 +143,58 @@ def load_text(path: Path) -> str:
         return f.read()
 
 
-# ── Phase 実行 ──
+# ── Phase runners ─────────────────────────────────────────────────────────────
 
 def run_phase1(client: genai.Client, config: dict, topics: list[dict], dirs: OutputDirs) -> None:
-    """Phase 1: 情報収集 + 構造化要約"""
+    """Phase 1: Information collection + structured summarisation."""
     logger.info("=" * 60)
-    logger.info("フェーズ 1: 情報収集 + 構造化要約")
+    logger.info("Phase 1: Information collection + structured summarisation")
     logger.info("=" * 60)
 
-    # 全トピック一括収集（スクリーンショットはdata/screenshots/に保存）
     screenshot_dir = dirs.data / "screenshots"
     raw_statements = collect_all_topics(client, config, screenshot_dir=screenshot_dir)
     save_json(raw_statements, dirs.data / "raw_statements.json")
 
-    # 構造化要約
     briefing_data = generate_structured_summary(client, topics, raw_statements)
     save_json(briefing_data, dirs.data / "briefing_data.json")
 
     tc = len([k for k in raw_statements if not k.startswith("__")])
     sc = len(briefing_data.get("briefing_sections", []))
-    logger.info(f"フェーズ 1 完了: {tc}トピック収集、{sc}セクション構造化")
+    logger.info(f"Phase 1 complete: {tc} topic(s) collected, {sc} section(s) structured.")
 
 
 def run_phase2(client: genai.Client, topics: list[dict], dirs: OutputDirs) -> None:
-    """Phase 2: 原稿生成 + 画像生成"""
+    """Phase 2: Script generation + image generation."""
     logger.info("=" * 60)
-    logger.info("フェーズ 2: 原稿生成 + 画像生成")
+    logger.info("Phase 2: Script generation + image generation")
     logger.info("=" * 60)
 
     briefing_data = load_json(dirs.data / "briefing_data.json")
     date_str = datetime.now(timezone.utc).strftime("%B %d, %Y")  # e.g. "March 15, 2026"
 
-    # 全体原稿
+    # Full briefing script
     full_script = generate_briefing_script(client, briefing_data)
     save_text(full_script, dirs.data / "script.txt")
 
-    # クリップ原稿
+    # Per-clip scripts
     clip_scripts = generate_clip_scripts(client, briefing_data)
     save_json(clip_scripts, dirs.data / "clip_scripts.json")
 
-    # 画像生成
+    # Images
     title_slide = generate_title_slide(client, topics, dirs.images, date_str)
     lineup_image = generate_news_lineup_image(client, topics, dirs.images, date_str)
-    # briefing_dataからトピックごとに画像を生成（IMAGEマーカー不要）
+    # Generate per-topic images directly from briefing_data (no [IMAGE:] markers needed)
     content_slides = generate_briefing_images(
         client, briefing_data, topics, dirs.images, date_str,
     )
 
-    # クリップ用画像
+    # Per-clip images
     clip_image_paths = []
     for i, clip in enumerate(clip_scripts):
         clip_dir = dirs.clips / f"clip_{i+1:03d}"
         clip_dir.mkdir(parents=True, exist_ok=True)
         img_path = generate_clip_image(client, clip, clip_dir / "image.png")
         clip_image_paths.append(str(img_path))
-        # クリップ原稿も保存
         save_text(clip["script"], clip_dir / "script.txt")
 
     image_manifest = {
@@ -207,23 +206,23 @@ def run_phase2(client: genai.Client, topics: list[dict], dirs: OutputDirs) -> No
     save_json(image_manifest, dirs.data / "image_manifest.json")
 
     logger.info(
-        f"フェーズ 2 完了: タイトル1枚 + 一覧1枚 + コンテンツ{len(content_slides)}枚"
-        f" + クリップ{len(clip_image_paths)}枚"
+        f"Phase 2 complete: 1 title + 1 lineup + {len(content_slides)} content slide(s)"
+        f" + {len(clip_image_paths)} clip image(s)."
     )
 
 
 def run_phase3(client: genai.Client, dirs: OutputDirs) -> None:
-    """Phase 3: TTS音声生成（全体 + クリップ）"""
+    """Phase 3: TTS audio generation (full briefing + clips)."""
     logger.info("=" * 60)
-    logger.info("フェーズ 3: ナレーション音声生成")
+    logger.info("Phase 3: Narration audio generation")
     logger.info("=" * 60)
 
-    # 全体ナレーション
+    # Full briefing narration
     full_script = load_text(dirs.data / "script.txt")
     audio_paths = generate_narration(client, full_script, dirs.audio)
     audio_manifest = {"segments": [str(p) for p in audio_paths]}
 
-    # クリップナレーション
+    # Per-clip narration
     clip_scripts = load_json(dirs.data / "clip_scripts.json")
     clip_audio_paths = []
     for i, clip in enumerate(clip_scripts):
@@ -236,21 +235,21 @@ def run_phase3(client: genai.Client, dirs: OutputDirs) -> None:
     save_json(audio_manifest, dirs.data / "audio_manifest.json")
 
     logger.info(
-        f"フェーズ 3 完了: 全体{len(audio_paths)}セグメント"
-        f" + クリップ{len(clip_audio_paths)}件"
+        f"Phase 3 complete: {len(audio_paths)} full segment(s)"
+        f" + {len(clip_audio_paths)} clip(s)."
     )
 
 
 def run_phase4(dirs: OutputDirs, topics: list[dict]) -> None:
-    """Phase 4: 動画合成（全体 + クリップ）"""
+    """Phase 4: Video composition (full briefing + clips)."""
     logger.info("=" * 60)
-    logger.info("フェーズ 4: 動画合成")
+    logger.info("Phase 4: Video composition")
     logger.info("=" * 60)
 
     image_manifest = load_json(dirs.data / "image_manifest.json")
     audio_manifest = load_json(dirs.data / "audio_manifest.json")
 
-    # 全体ブリーフィング動画
+    # Full briefing video
     title_slide = Path(image_manifest["title_slide"])
     content_slides = [Path(p) for p in image_manifest["content_slides"]]
     audio_segments = [Path(p) for p in audio_manifest["segments"]]
@@ -261,9 +260,9 @@ def run_phase4(dirs: OutputDirs, topics: list[dict]) -> None:
         audio_segments=audio_segments,
         output_dir=dirs.root,
     )
-    logger.info(f"全体ブリーフィング動画: {output_video}")
+    logger.info(f"Full briefing video: {output_video}")
 
-    # クリップ動画
+    # Per-clip videos
     clip_scripts = load_json(dirs.data / "clip_scripts.json")
     clip_images = image_manifest.get("clip_images", [])
     clip_audios = audio_manifest.get("clip_audios", [])
@@ -274,7 +273,7 @@ def run_phase4(dirs: OutputDirs, topics: list[dict]) -> None:
 
     for i in range(len(clip_scripts)):
         if i >= len(clip_images) or i >= len(clip_audios):
-            logger.warning(f"クリップ{i+1}: 画像または音声が不足。スキップ。")
+            logger.warning(f"Clip {i+1}: missing image or audio — skipping.")
             continue
 
         clip_dir = dirs.clips / f"clip_{i+1:03d}"
@@ -288,7 +287,7 @@ def run_phase4(dirs: OutputDirs, topics: list[dict]) -> None:
             clip_img = Path(clip_images[i])
             clip_auds = [Path(p) for p in clip_audios[i]]
 
-            # 結合音声はclip_dir内に保存、動画は直接video/clips/に出力
+            # Merged audio saved inside clip_dir; video output goes to video/clips/
             compose_video(
                 title_slide=clip_img,
                 content_slides=[],
@@ -299,15 +298,15 @@ def run_phase4(dirs: OutputDirs, topics: list[dict]) -> None:
             )
             if clip_video_path.exists():
                 clip_video_paths.append(str(clip_video_path))
-                logger.info(f"クリップ動画: {clip_video_path}")
+                logger.info(f"Clip video: {clip_video_path}")
             else:
-                logger.warning(f"クリップ{i+1}: 動画生成されず")
+                logger.warning(f"Clip {i+1}: video not created.")
         except Exception as e:
-            logger.error(f"クリップ{i+1} 動画合成失敗: {e}")
+            logger.error(f"Clip {i+1} composition failed: {e}")
 
-    # マニフェスト更新
+    # Update manifest
     _write_manifest(dirs, topics, video_path=output_video, clip_video_paths=clip_video_paths)
-    logger.info(f"フェーズ 4 完了: 全体1本 + クリップ{len(clip_video_paths)}本")
+    logger.info(f"Phase 4 complete: 1 full video + {len(clip_video_paths)} clip(s).")
 
 
 def _write_manifest(
@@ -325,10 +324,7 @@ def _write_manifest(
         except Exception:
             pass
 
-    topic_tags = []
-    for t in topics:
-        topic_tags.extend(t.get("tags", []))
-    topic_tags = list(set(topic_tags))
+    topic_tags = list(set(tag for t in topics for tag in t.get("tags", [])))
 
     manifest = {
         **existing,
@@ -336,8 +332,12 @@ def _write_manifest(
         "brand": "WeaveCast",
         "generated_at": existing.get("generated_at", datetime.now(timezone.utc).isoformat()),
         "topics": [
-            {"title": t.get("title", ""), "title_en": t.get("title_en", ""),
-             "tags": t.get("tags", []), "importance_score": t.get("importance_score", 7.0)}
+            {
+                "title_en": t.get("title_en", ""),
+                "title_target_lang": t.get("title_target_lang", t.get("title_en", "")),
+                "tags": t.get("tags", []),
+                "importance_score": t.get("importance_score", 7.0),
+            }
             for t in topics
         ],
         "topic_tags": topic_tags,
@@ -359,7 +359,7 @@ def _write_manifest(
     if content_index_ids:
         manifest["content_index_ids"] = content_index_ids
 
-    # news_lineup パスを image_manifest から取得
+    # Populate news_lineup from image_manifest if not already set
     img_manifest_path = dirs.data / "image_manifest.json"
     if img_manifest_path.exists() and not manifest["artifacts"]["news_lineup"]:
         try:
@@ -373,41 +373,40 @@ def _write_manifest(
 
 
 def run_phase5(dirs: OutputDirs, topics: list[dict]) -> None:
-    """Phase 5: content_index登録（+ オプションでYouTubeアップロード）"""
+    """Phase 5: ContentIndex registration (+ optional YouTube upload)."""
     logger.info("=" * 60)
-    logger.info("フェーズ 5: ContentIndex登録")
+    logger.info("Phase 5: ContentIndex registration")
     logger.info("=" * 60)
 
     manifest = load_json(dirs.root / "manifest.json")
-    ts = dirs.root.name  # briefing_YYYYMMDD_HHMMSS
+    ts = dirs.root.name   # briefing_YYYYMMDD_HHMMSS
     topic_tags = manifest.get("topic_tags", [])
     content_index_ids = []
 
     mgr = ContentIndexManager()
 
-    # クリップ原稿を先に読み込む（全体ブリーフィングの概要生成にも使う）
+    # Load clip scripts upfront (also used for full-briefing description)
     clip_scripts_data = []
     clip_scripts_path = dirs.data / "clip_scripts.json"
     if clip_scripts_path.exists():
         clip_scripts_data = load_json(clip_scripts_path)
 
-    # 全体ブリーフィング動画
+    # Full briefing video
     video_path = manifest["artifacts"].get("video")
     if video_path and Path(video_path).exists():
         entry_id = f"m1_{ts}"
-        # 概要: 各クリップのタイトルと日付
         date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         clip_titles = [
-            c.get("topic_title", f"トピック{i+1}")
+            c.get("topic_title", f"Topic {i+1}")
             for i, c in enumerate(clip_scripts_data)
         ]
-        briefing_desc = f"{date_str} 国際情勢ブリーフィング。"
+        briefing_desc = f"{date_str} international news briefing."
         if clip_titles:
-            briefing_desc += "含まれるトピック: " + " / ".join(clip_titles)
+            briefing_desc += " Topics: " + " / ".join(clip_titles)
 
         entry = make_entry(
             id=entry_id, module="M1", content_type="video",
-            title=f"国際情勢ブリーフィング {date_str}",
+            title=f"International News Briefing {date_str}",
             description=briefing_desc,
             topic_tags=topic_tags + ["briefing", "full"],
             importance_score=max((t.get("importance_score", 7) for t in topics), default=7),
@@ -416,9 +415,9 @@ def run_phase5(dirs: OutputDirs, topics: list[dict]) -> None:
         )
         mgr.add_entry(entry)
         content_index_ids.append(entry_id)
-        logger.info(f"[ContentIndex] 全体ブリーフィング登録: {entry_id}")
+        logger.info(f"[ContentIndex] Full briefing registered: {entry_id}")
 
-    # クリップ動画
+    # Clip videos
     clip_videos = manifest["artifacts"].get("clip_videos", [])
 
     for i, clip_path in enumerate(clip_videos):
@@ -427,7 +426,6 @@ def run_phase5(dirs: OutputDirs, topics: list[dict]) -> None:
         topic_info = topics[i] if i < len(topics) else {}
         clip_info = clip_scripts_data[i] if i < len(clip_scripts_data) else {}
 
-        # 概要: clip_scripts.json の script テキスト（長すぎる場合は先頭300文字）
         clip_script_text = clip_info.get("script", "")
         clip_desc = clip_script_text[:300]
         if len(clip_script_text) > 300:
@@ -436,7 +434,10 @@ def run_phase5(dirs: OutputDirs, topics: list[dict]) -> None:
         entry_id = f"m1_{ts}_clip_{i+1:03d}"
         entry = make_entry(
             id=entry_id, module="M1", content_type="video",
-            title=clip_info.get("topic_title", topic_info.get("title", f"クリップ{i+1}")),
+            title=clip_info.get(
+                "topic_title",
+                topic_info.get("title_en", f"Clip {i+1}"),
+            ),
             description=clip_desc,
             topic_tags=topic_info.get("tags", []) + ["clip"],
             importance_score=topic_info.get("importance_score", 7.0),
@@ -445,22 +446,21 @@ def run_phase5(dirs: OutputDirs, topics: list[dict]) -> None:
         )
         mgr.add_entry(entry)
         content_index_ids.append(entry_id)
-        logger.info(f"[ContentIndex] クリップ登録: {entry_id}")
+        logger.info(f"[ContentIndex] Clip registered: {entry_id}")
 
-    # ニュース一覧画像
+    # News lineup image
     lineup_path = manifest["artifacts"].get("news_lineup")
     if lineup_path and Path(lineup_path).exists():
         entry_id = f"m1_{ts}_lineup"
-        # 概要: トピック一覧
-        lineup_desc = "本日のニューストピック一覧画像。"
+        lineup_desc = "Today's news topics lineup image."
         if clip_scripts_data:
             lineup_titles = [c.get("topic_title", "") for c in clip_scripts_data if c.get("topic_title")]
             if lineup_titles:
-                lineup_desc += "トピック: " + " / ".join(lineup_titles)
+                lineup_desc += " Topics: " + " / ".join(lineup_titles)
 
         entry = make_entry(
             id=entry_id, module="M1", content_type="image",
-            title=f"本日のニュース一覧 {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+            title=f"Today's News Lineup {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
             description=lineup_desc,
             topic_tags=["lineup", "index"] + topic_tags,
             importance_score=10.0,
@@ -469,25 +469,24 @@ def run_phase5(dirs: OutputDirs, topics: list[dict]) -> None:
         )
         mgr.add_entry(entry)
         content_index_ids.append(entry_id)
-        logger.info(f"[ContentIndex] ニュース一覧画像登録: {entry_id}")
+        logger.info(f"[ContentIndex] News lineup image registered: {entry_id}")
 
-    # マニフェスト更新
     _write_manifest(dirs, topics, content_index_ids=content_index_ids)
-    logger.info(f"フェーズ 5 完了: {len(content_index_ids)}件登録")
+    logger.info(f"Phase 5 complete: {len(content_index_ids)} item(s) registered.")
 
 
-# ── エントリポイント ──
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="WeaveCast M1 パイプライン")
+    parser = argparse.ArgumentParser(description="WeaveCast M1 pipeline")
     parser.add_argument("--topic-index", type=int, default=None,
-                        help="特定トピックのみ処理（後方互換）")
+                        help="Process a specific topic only (backward-compat)")
     parser.add_argument("--phase", type=int, default=0,
-                        help="特定フェーズのみ実行（1-5）。0=全フェーズ")
+                        help="Run a specific phase only (1–5). 0 = all phases.")
     parser.add_argument("--skip-upload", action="store_true",
-                        help="YouTubeアップロードをスキップ")
+                        help="Skip YouTube upload")
     parser.add_argument("--output-dir", type=str, default=None,
-                        help="既存の出力ディレクトリを再利用")
+                        help="Reuse an existing output directory")
     args = parser.parse_args()
 
     load_dotenv(ENV_FILE)
@@ -495,16 +494,16 @@ def main() -> None:
 
     config = load_config()
     topics = load_topics(config, args.topic_index)
-    logger.info(f"トピック数: {len(topics)}")
+    logger.info(f"Topics loaded: {len(topics)}")
     for t in topics:
-        logger.info(f"  - {t['title']}")
+        logger.info(f"  - {t.get('title_en', '')}")
 
     if args.output_dir:
         dirs = OutputDirs.from_existing(args.output_dir)
-        logger.info(f"既存ディレクトリ再利用: {dirs.root}")
+        logger.info(f"Reusing existing directory: {dirs.root}")
     else:
         dirs = OutputDirs.create(BASE_DIR)
-        logger.info(f"出力ディレクトリ: {dirs.root}")
+        logger.info(f"Output directory: {dirs.root}")
 
     if args.phase == 0:
         run_phase1(client, config, topics, dirs)
@@ -514,8 +513,8 @@ def main() -> None:
         if not args.skip_upload:
             run_phase5(dirs, topics)
         else:
-            run_phase5(dirs, topics)  # content_index登録は常に実行
-            logger.info("YouTubeアップロードはスキップ")
+            run_phase5(dirs, topics)  # ContentIndex registration always runs
+            logger.info("YouTube upload skipped.")
     elif args.phase == 1:
         run_phase1(client, config, topics, dirs)
     elif args.phase == 2:
@@ -527,10 +526,10 @@ def main() -> None:
     elif args.phase == 5:
         run_phase5(dirs, topics)
     else:
-        logger.error(f"無効なフェーズ: {args.phase}（0-5）")
+        logger.error(f"Invalid phase: {args.phase} (valid range: 0–5)")
         sys.exit(1)
 
-    logger.info(f"完了。出力先: {dirs.root}")
+    logger.info(f"Done. Output: {dirs.root}")
 
 
 if __name__ == "__main__":

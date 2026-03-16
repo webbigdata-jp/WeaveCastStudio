@@ -1,12 +1,13 @@
-# shared/ — M1・M3 共通モジュール
+# shared/ — Common modules for M1 and M3
 #
-# 元々 compe_M1/agents/ にあったファイルをプロジェクトルートに移動したもの。
-# M1・M3 両方から import して使用する。
+# Originally located at compe_M1/agents/; moved to the project root.
+# Imported by both M1 and M3.
 #
-# 含まれるモジュール:
-#   source_collector.py  — Phase 1: Gemini Search + nodriver による情報収集
-#   summarizer.py        — Phase 1: 構造化要約
-#   script_writer.py     — Phase 2: ナレーション原稿生成
-#   image_generator.py   — Phase 2: インフォグラフィック画像生成
-#   narrator.py          — Phase 3: TTS 音声生成
-#   video_composer.py    — Phase 4: ffmpeg 動画合成
+# Modules:
+#   source_collector.py  — Phase 1: Information collection via Gemini Search + nodriver
+#   summarizer.py        — Phase 1: Structured summarization
+#   script_writer.py     — Phase 2: Narration script generation
+#   image_generator.py   — Phase 2: Infographic image generation
+#   narrator.py          — Phase 3: TTS audio generation
+#   video_composer.py    — Phase 4: Video composition via ffmpeg
+#   language_utils.py    — Shared: BCP-47 language config loader

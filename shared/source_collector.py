@@ -1,15 +1,15 @@
 """
-STEP 2: 各トピックの最新情報収集
+Phase 2: Latest information collection for all topics.
 
-処理フロー:
-  1. Gemini + Google Search Tool でトピックごとに1回検索
-     - search_countries をヒントとして含めるが、指定外の国も含む
-     - grounding_metadata からソースURL・タイトルを抽出
-  2. バックアップソース（iranmonitor, parseek, signalcockpit）を
-     DrissionPageで常に取得し、Geminiで要約して情報を補完
-  3. 過去24時間を「最新ニュース」として重み付けする
+Processing flow:
+  1. One Gemini + Google Search Tool query per topic.
+     - search_countries are included as hints; other countries may also be covered.
+     - Source URLs and titles are extracted from grounding_metadata.
+  2. Backup sources (iranmonitor, parseek, signalcockpit) are always fetched
+     via DrissionPage and summarised by Gemini to supplement the main results.
+  3. News from the past 24 hours is weighted as "latest".
 
-DrissionPageはOSINTバックアップソースの取得専用。
+DrissionPage is used exclusively for the OSINT backup sources.
 """
 
 import logging
@@ -23,7 +23,7 @@ from DrissionPage import ChromiumPage, ChromiumOptions
 
 logger = logging.getLogger(__name__)
 
-# デフォルトのスクリーンショット保存先（main.py から上書きされる想定）
+# Default screenshot directory (overridden by main.py)
 SCREENSHOT_DIR = Path(__file__).parent.parent / "output" / "screenshots"
 PAGE_LOAD_WAIT = 3.0
 PAGE_LOAD_WAIT_HEAVY_JS = 6.0
@@ -31,8 +31,8 @@ HEADLESS = True
 
 BACKUP_SOURCES = [
     {"name": "IranMonitor", "url": "https://www.iranmonitor.org/", "wait": PAGE_LOAD_WAIT_HEAVY_JS},
-    {"name": "Parseek", "url": "https://www.parseek.com/", "wait": PAGE_LOAD_WAIT},
-    {"name": "SignalCockpit", "url": "https://signalcockpit.com/", "wait": PAGE_LOAD_WAIT_HEAVY_JS},
+    {"name": "Parseek",     "url": "https://www.parseek.com/",     "wait": PAGE_LOAD_WAIT},
+    {"name": "SignalCockpit","url": "https://signalcockpit.com/",  "wait": PAGE_LOAD_WAIT_HEAVY_JS},
 ]
 
 
@@ -60,17 +60,16 @@ def _extract_grounding_sources(response) -> list[dict]:
                 if title or url:
                     sources.append({"title": title, "url": url})
     except Exception as e:
-        logger.warning(f"  grounding_metadata 抽出エラー: {e}")
+        logger.warning(f"  grounding_metadata extraction error: {e}")
     return sources
 
 
 def _collect_one_topic(
     client: genai.Client, topic: dict, search_countries: list[str],
 ) -> dict:
-    title = topic["title"]
-    title_en = topic.get("title_en", title)
+    title = topic["title_en"]
 
-    logger.info(f"トピック「{title}」の情報を収集中...")
+    logger.info(f"Collecting information for topic: '{title}' ...")
 
     now_utc = datetime.now(timezone.utc)
     date_str = now_utc.strftime("%Y-%m-%d")
@@ -94,7 +93,7 @@ def _collect_one_topic(
             contents=(
                 f"Today's date is {date_str}. "
                 f"Search for the latest developments, official government statements, "
-                f"and reliable news reports regarding: {title_en}.\n\n"
+                f"and reliable news reports regarding: {title}.\n\n"
                 f"{countries_hint}\n\n"
                 f"PRIORITIZE news and statements from the last 24 hours "
                 f"(since {since_str}). "
@@ -118,7 +117,7 @@ def _collect_one_topic(
                 safety_settings=[
                     types.SafetySetting(
                         category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                        threshold=types.HarmBlockThreshold.BLOCK_NONE, # ブロックしない
+                        threshold=types.HarmBlockThreshold.BLOCK_NONE,
                     ),
                     types.SafetySetting(
                         category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -136,24 +135,30 @@ def _collect_one_topic(
             )
         )
         if not response.text:
-            # ブロック理由などをログに出しておくと原因究明しやすいです
-            finish_reason = response.candidates[0].finish_reason if response.candidates else "Unknown"
-            print(f"警告: Geminiの応答が空です (理由: {finish_reason})")
-            gemini_text = ""  # または適切なデフォルト値
+            finish_reason = (
+                response.candidates[0].finish_reason
+                if response.candidates else "Unknown"
+            )
+            logger.warning(
+                f"Warning: Gemini returned an empty response (reason: {finish_reason})"
+            )
+            gemini_text = ""
         else:
             gemini_text = response.text.strip()
     except Exception as e:
-        logger.error(f"  -> 「{title}」のGemini検索失敗: {e}")
+        logger.error(f"  -> Gemini search failed for '{title}': {e}")
         return {}
 
     if "NO_STATEMENT_FOUND" in gemini_text:
-        logger.warning(f"  -> 「{title}」の情報が見つかりませんでした。")
+        logger.warning(f"  -> No information found for '{title}'.")
         return {}
 
     grounding_sources = _extract_grounding_sources(response)
     source_urls = [s["url"] for s in grounding_sources if s["url"]]
 
-    logger.info(f"  -> テキスト{len(gemini_text)}文字、ソース{len(grounding_sources)}件")
+    logger.info(
+        f"  -> {len(gemini_text)} chars, {len(grounding_sources)} source(s)."
+    )
     return {
         "text": gemini_text,
         "urls": source_urls,
@@ -162,7 +167,7 @@ def _collect_one_topic(
     }
 
 
-# ─── バックアップソース ───
+# ─── Backup sources ───────────────────────────────────────────────────────────
 
 def _html_to_plain_text(html: str, max_chars: int = 8000) -> str:
     plain = re.sub(r'<script[^>]*>.*?</script>', ' ', html, flags=re.DOTALL)
@@ -176,17 +181,17 @@ def _fetch_backup_source(page, source: dict, screenshot_dir: Path) -> dict:
     name, url, wait = source["name"], source["url"], source.get("wait", PAGE_LOAD_WAIT)
     safe_name = re.sub(r'[^a-zA-Z0-9]', '_', name)
     screenshot_path = screenshot_dir / f"backup_{safe_name}.png"
-    logger.info(f"  [バックアップ] {name} を取得中: {url}")
+    logger.info(f"  [backup] Fetching {name}: {url}")
     try:
         page.get(url)
         time.sleep(wait)
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
         page.get_screenshot(path=str(screenshot_path.parent), name=screenshot_path.name)
         raw_text = _html_to_plain_text(page.html or "")
-        logger.info(f"  [バックアップ] {name}: {len(raw_text)}文字取得")
+        logger.info(f"  [backup] {name}: {len(raw_text)} chars retrieved.")
         return {"name": name, "url": url, "raw_text": raw_text, "screenshot_path": str(screenshot_path)}
     except Exception as e:
-        logger.warning(f"  [バックアップ] {name}: 取得失敗 - {e}")
+        logger.warning(f"  [backup] {name}: fetch failed - {e}")
         return {"name": name, "url": url, "raw_text": "", "screenshot_path": None}
 
 
@@ -194,9 +199,13 @@ def _summarize_backup_sources(client: genai.Client, backup_results: list[dict], 
     valid = [s for s in backup_results if s["raw_text"]]
     if not valid:
         return {}
-    combined = "\n\n".join(f"=== {s['name']} ({s['url']}) ===\n{s['raw_text']}" for s in valid)
+    combined = "\n\n".join(
+        f"=== {s['name']} ({s['url']}) ===\n{s['raw_text']}" for s in valid
+    )
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    topic_list = "\n".join(f"- {t['title']} ({t.get('title_en', '')})" for t in topics)
+    topic_list = "\n".join(
+        f"- {t['title_en']}" for t in topics
+    )
 
     topic_related = ""
     try:
@@ -216,7 +225,7 @@ def _summarize_backup_sources(client: genai.Client, backup_results: list[dict], 
         )
         topic_related = r.text.strip()
     except Exception as e:
-        logger.warning(f"  [バックアップ] トピック関連抽出失敗: {e}")
+        logger.warning(f"  [backup] Topic-related extraction failed: {e}")
 
     all_headlines = ""
     try:
@@ -231,10 +240,11 @@ def _summarize_backup_sources(client: genai.Client, backup_results: list[dict], 
         )
         all_headlines = r.text.strip()
     except Exception as e:
-        logger.warning(f"  [バックアップ] ヘッドライン抽出失敗: {e}")
+        logger.warning(f"  [backup] Headline extraction failed: {e}")
 
     return {
-        "topic_related": topic_related, "all_headlines": all_headlines,
+        "topic_related": topic_related,
+        "all_headlines": all_headlines,
         "source_urls": [s["url"] for s in valid],
         "screenshot_paths": [s["screenshot_path"] for s in valid if s["screenshot_path"]],
     }
@@ -246,30 +256,34 @@ def _merge_backup(raw_statements: dict, backup_summary: dict) -> dict:
     tr = backup_summary.get("topic_related", "")
     if tr and "NO_RELEVANT_NEWS" not in tr:
         raw_statements["__backup_osint__"] = {
-            "text": tr, "urls": backup_summary.get("source_urls", []),
+            "text": tr,
+            "urls": backup_summary.get("source_urls", []),
             "screenshot_paths": backup_summary.get("screenshot_paths", []),
         }
     ah = backup_summary.get("all_headlines", "")
     if ah:
         raw_statements["__backup_headlines__"] = {
-            "text": ah, "urls": backup_summary.get("source_urls", []), "screenshot_paths": [],
+            "text": ah,
+            "urls": backup_summary.get("source_urls", []),
+            "screenshot_paths": [],
         }
     return raw_statements
 
 
-# ─── メインエントリポイント ───
+# ─── Main entry point ─────────────────────────────────────────────────────────
 
 def collect_all_topics(
     client: genai.Client, config: dict,
     screenshot_dir: Path = SCREENSHOT_DIR, headless: bool = HEADLESS,
 ) -> dict:
     """
-    全トピックの情報を一括収集する。
+    Collect information for all topics in one pass.
 
     Args:
-        config: topics.yaml全体 {"search_countries": [...], "topics": [...]}
+        config: Full topics.yaml content: {"search_countries": [...], "topics": [...]}
+
     Returns:
-        {"topic_title": {"text":..., "urls":..., ...}, "__backup_osint__":..., ...}
+        {"topic_title_en": {"text":..., "urls":..., ...}, "__backup_osint__":..., ...}
     """
     screenshot_dir.mkdir(parents=True, exist_ok=True)
     topics = config["topics"]
@@ -279,31 +293,35 @@ def collect_all_topics(
     for topic in topics:
         result = _collect_one_topic(client, topic, search_countries)
         if result:
-            raw_statements[topic["title"]] = result
+            raw_statements[topic["title_en"]] = result
         time.sleep(2)
 
     logger.info("=" * 40)
-    logger.info("バックアップソースの収集を開始...")
+    logger.info("Starting backup source collection ...")
     options = _build_chromium_options(headless=headless)
     page = ChromiumPage(addr_or_opts=options)
-    logger.info(f"DrissionPageブラウザ起動（ヘッドレス={headless}）")
+    logger.info(f"DrissionPage browser started (headless={headless}).")
     try:
         backup_results = [_fetch_backup_source(page, s, screenshot_dir) for s in BACKUP_SOURCES]
         for _ in backup_results:
             time.sleep(1)
         raw_statements = _merge_backup(
-            raw_statements, _summarize_backup_sources(client, backup_results, topics)
+            raw_statements,
+            _summarize_backup_sources(client, backup_results, topics),
         )
     finally:
         page.quit()
-        logger.info("DrissionPageブラウザ停止")
+        logger.info("DrissionPage browser stopped.")
 
     tc = len([k for k in raw_statements if not k.startswith("__")])
-    logger.info(f"情報収集完了: {tc}/{len(topics)}トピック + バックアップ{len(BACKUP_SOURCES)}件")
+    logger.info(
+        f"Collection complete: {tc}/{len(topics)} topic(s) + "
+        f"{len(BACKUP_SOURCES)} backup source(s)."
+    )
     return raw_statements
 
 
-# 後方互換ラッパー
+# Backward-compatibility wrapper
 def collect_government_statements(
     client: genai.Client, topic: dict,
     screenshot_dir: Path = SCREENSHOT_DIR, headless: bool = HEADLESS,

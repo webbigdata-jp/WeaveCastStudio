@@ -1,34 +1,32 @@
 """
-content_index.py
+content_index.py — Shared content registry for WeaveCastStudio.
 
-GeminiLiveAgent/ 共有モジュール。
-M1・M3が生成した動画・スクリーンショットを一元管理し、
-M4がコンテンツを検索・再生できるようにする。
+M1 and M3 register produced videos and screenshots here so that
+M4 can search and play them during a live broadcast.
 
-ファイルパス: GeminiLiveAgent/content_index.json
+File path: WeaveCastStudio/content_index.json
 
-設計:
-  - パスは登録時に相対パス（content_index.jsonからの相対）と
-    絶対パスの両方を保持する
-  - 動画エントリには duration_seconds を含む
-  - is_breaking フラグでクローラーからの緊急割り込みに対応
-  - スレッドセーフな書き込み（threading.Lock）
+Design:
+  - Paths are stored as both relative (from content_index.json) and absolute.
+  - Video entries include duration_seconds.
+  - is_breaking flag supports urgent breaking-news interrupts from the crawler.
+  - Thread-safe writes via threading.Lock.
 
-使い方:
-  # M1/M3から登録
-  mgr = ContentIndexManager()
-  mgr.add_entry(ContentEntry(
-      id="m1_20260310_172523",
-      module="M1",
-      type="video",
-      title="イラン紛争：各国政府の公式見解",
-      ...
-  ))
+Usage:
+    # Register from M1 / M3
+    mgr = ContentIndexManager()
+    mgr.add_entry(make_entry(
+        id="m1_20260310_172523",
+        module="M1",
+        content_type="video",
+        title="Iran Conflict: Official Government Positions",
+        ...
+    ))
 
-  # M4から検索
-  mgr = ContentIndexManager()
-  entries = mgr.get_by_tags(["iran", "diplomatic"])
-  breaking = mgr.get_breaking()
+    # Search from M4
+    mgr = ContentIndexManager()
+    entries = mgr.get_by_tags(["iran", "diplomatic"])
+    breaking = mgr.get_breaking()
 """
 
 import json
@@ -41,13 +39,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# content_index.json のデフォルトパス（このファイルと同じディレクトリ）
+# Default path for content_index.json (same directory as this file)
 _DEFAULT_INDEX_PATH = Path(__file__).parent / "content_index.json"
 
 
-# ──────────────────────────────────────────
-# エントリのデータ構造
-# ──────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Entry data structure
+# ──────────────────────────────────────────────────────────────────────────────
 
 def make_entry(
     id: str,
@@ -57,7 +55,7 @@ def make_entry(
     topic_tags: list[str],
     description: str | None = None,
     created_at: str | None = None,
-    source_id: str | None = None,       # M3のsources.yaml id
+    source_id: str | None = None,       # M3 sources.yaml id
     source_name: str | None = None,
     importance_score: float | None = None,
     is_breaking: bool = False,
@@ -65,46 +63,47 @@ def make_entry(
     screenshot_path: str | Path | None = None,
     manifest_path: str | Path | None = None,
     duration_seconds: float | None = None,
-    index_path: Path | None = None,     # 相対パス計算の基準
+    index_path: Path | None = None,     # Base for relative path calculation
 ) -> dict[str, Any]:
     """
-    ContentIndex エントリ dict を生成する。
+    Build a ContentIndex entry dict.
 
-    video_path / screenshot_path / manifest_path は
-    相対パス（index_path からの相対）と絶対パスの両方を保持する。
+    video_path / screenshot_path / manifest_path are stored as both
+    relative (from index_path) and absolute paths.
 
     Args:
-        id: 一意なID（例: "m1_20260310_172523"）
-        module: "M1" または "M3"
-        content_type: "video" | "screenshot" | "image"
-        title: コンテンツのタイトル
-        topic_tags: 検索用タグリスト
-        description: コンテンツの概要・要約テキスト（M4がコンテキストを把握するため）
-        created_at: ISO8601文字列。None の場合は現在時刻
-        source_id: M3 sources.yaml の id（M1の場合は None）
-        source_name: ソース表示名
-        importance_score: 重要度スコア（0.0-10.0）
-        is_breaking: 緊急ニュースフラグ
-        video_path: 動画ファイルのパス
-        screenshot_path: スクリーンショットのパス
-        manifest_path: manifest.json / briefing_plan.json のパス
-        duration_seconds: 動画の長さ（秒）。None の場合は自動検出を試みる
-        index_path: content_index.json のパス（相対パス計算用）
+        id: Unique identifier (e.g. "m1_20260310_172523").
+        module: "M1" or "M3".
+        content_type: "video" | "screenshot" | "image".
+        title: Human-readable title.
+        topic_tags: Search tags.
+        description: Summary text for M4 context awareness.
+        created_at: ISO 8601 string; defaults to now (UTC).
+        source_id: M3 sources.yaml id (None for M1).
+        source_name: Display name of the source.
+        importance_score: Relevance score (0.0–10.0).
+        is_breaking: Breaking news flag.
+        video_path: Path to the video file.
+        screenshot_path: Path to the screenshot.
+        manifest_path: Path to manifest.json / briefing_plan.json.
+        duration_seconds: Video length; auto-detected via ffprobe if None.
+        index_path: Path to content_index.json (for relative path computation).
+
     Returns:
-        dict: ContentIndex エントリ
+        dict: ContentIndex entry.
     """
     base = index_path or _DEFAULT_INDEX_PATH
 
     def _resolve(p: str | Path | None) -> tuple[str | None, str | None]:
-        """パスを (相対パス文字列, 絶対パス文字列) に解決する"""
+        """Resolve a path to (relative_str, absolute_str)."""
         if p is None:
             return None, None
         abs_p = Path(p).resolve()
         try:
             rel_p = abs_p.relative_to(base.parent.resolve())
-            rel_str = str(rel_p).replace("\\", "/")  # Windows対応
+            rel_str = str(rel_p).replace("\\", "/")  # Windows compatibility
         except ValueError:
-            # base の外にある場合は相対パス計算不可 → 絶対パスのみ
+            # Path is outside base directory — absolute only
             rel_str = None
         return rel_str, str(abs_p).replace("\\", "/")
 
@@ -112,7 +111,7 @@ def make_entry(
     shot_rel, shot_abs = _resolve(screenshot_path)
     manifest_rel, manifest_abs = _resolve(manifest_path)
 
-    # 動画の長さを自動検出（ffprobe が使える場合）
+    # Auto-detect video duration via ffprobe if not provided
     dur = duration_seconds
     if dur is None and video_abs:
         dur = _probe_duration(video_abs)
@@ -128,17 +127,17 @@ def make_entry(
         "source_name": source_name,
         "importance_score": importance_score,
         "is_breaking": is_breaking,
-        # 動画パス
+        # Video
         "video_path": video_rel,
         "video_path_abs": video_abs,
         "duration_seconds": dur,
-        # スクリーンショットパス
+        # Screenshot
         "screenshot_path": shot_rel,
         "screenshot_path_abs": shot_abs,
-        # マニフェストパス
+        # Manifest
         "manifest_path": manifest_rel,
         "manifest_path_abs": manifest_abs,
-        # 管理フィールド
+        # Metadata
         "created_at": created_at or datetime.now(timezone.utc).isoformat(),
         "used_in_broadcast": False,
     }
@@ -146,8 +145,8 @@ def make_entry(
 
 def _probe_duration(video_path: str) -> float | None:
     """
-    ffprobe で動画の長さ（秒）を取得する。
-    ffprobe が存在しない場合や失敗した場合は None を返す。
+    Retrieve video duration in seconds via ffprobe.
+    Returns None if ffprobe is unavailable or fails.
     """
     try:
         result = subprocess.run(
@@ -168,18 +167,18 @@ def _probe_duration(video_path: str) -> float | None:
     return None
 
 
-# ──────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # ContentIndexManager
-# ──────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 
 class ContentIndexManager:
     """
-    content_index.json の読み書き・検索を担うクラス。
-    スレッドセーフ（Lock使用）。
+    Read/write/search interface for content_index.json.
+    All write operations are thread-safe (Lock).
 
     Args:
-        index_path: content_index.json のパス。
-                    None の場合は GeminiLiveAgent/content_index.json
+        index_path: Path to content_index.json.
+                    Defaults to WeaveCastStudio/content_index.json.
     """
 
     def __init__(self, index_path: str | Path | None = None):
@@ -187,56 +186,49 @@ class ContentIndexManager:
         self._lock = Lock()
         self._ensure_file()
 
-    # ──────────────────────────────────────
-    # 書き込み系
-    # ──────────────────────────────────────
+    # ── Write operations ──────────────────────────────────────────────────────
 
     def add_entry(self, entry: dict[str, Any]) -> None:
         """
-        エントリを追加する。同一 id が存在する場合は上書きする。
+        Add an entry. Overwrites any existing entry with the same id.
 
         Args:
-            entry: make_entry() で生成した dict
+            entry: Dict produced by make_entry().
         """
         with self._lock:
             data = self._load()
-            # 同一IDは上書き
-            data["entries"] = [
-                e for e in data["entries"] if e["id"] != entry["id"]
-            ]
+            data["entries"] = [e for e in data["entries"] if e["id"] != entry["id"]]
             data["entries"].append(entry)
             data["last_updated"] = datetime.now(timezone.utc).isoformat()
             self._save(data)
-        logger.info(f"[ContentIndex] 追加: {entry['id']}（{entry['type']}）")
+        logger.info(f"[ContentIndex] Added: {entry['id']} ({entry['type']})")
 
     def remove_entry(self, entry_id: str) -> bool:
         """
-        指定 id のエントリを削除する。
+        Remove the entry with the given id.
 
-        Args:
-            entry_id: 削除対象のエントリ id
         Returns:
-            bool: 対象エントリが見つかり削除できた場合 True
+            True if the entry was found and removed.
         """
         with self._lock:
             data = self._load()
             before = len(data["entries"])
             data["entries"] = [e for e in data["entries"] if e["id"] != entry_id]
             if len(data["entries"]) == before:
-                logger.warning(f"[ContentIndex] remove_entry: IDが見つかりません: {entry_id}")
+                logger.warning(f"[ContentIndex] remove_entry: id not found: {entry_id}")
                 return False
             data["last_updated"] = datetime.now(timezone.utc).isoformat()
             self._save(data)
-        logger.info(f"[ContentIndex] 削除: {entry_id}")
+        logger.info(f"[ContentIndex] Removed: {entry_id}")
         return True
 
     def set_breaking(self, entry_id: str, is_breaking: bool = True) -> bool:
         """
-        is_breaking フラグを更新する。
-        クローラーが緊急ニュースを検知したときに呼び出す。
+        Update the is_breaking flag.
+        Called by the crawler when a breaking news item is detected.
 
         Returns:
-            bool: 対象エントリが見つかった場合 True
+            True if the entry was found.
         """
         with self._lock:
             data = self._load()
@@ -246,18 +238,18 @@ class ContentIndexManager:
                     data["last_updated"] = datetime.now(timezone.utc).isoformat()
                     self._save(data)
                     logger.info(
-                        f"[ContentIndex] is_breaking={is_breaking}に設定: {entry_id}"
+                        f"[ContentIndex] is_breaking={is_breaking} set for: {entry_id}"
                     )
                     return True
-        logger.warning(f"[ContentIndex] set_breaking: IDが見つかりません: {entry_id}")
+        logger.warning(f"[ContentIndex] set_breaking: id not found: {entry_id}")
         return False
 
     def mark_used(self, entry_id: str) -> bool:
         """
-        放送で使用済みフラグを立てる。M4が再生後に呼び出す。
+        Mark an entry as used in a broadcast. Called by M4 after playback.
 
         Returns:
-            bool: 対象エントリが見つかった場合 True
+            True if the entry was found.
         """
         with self._lock:
             data = self._load()
@@ -269,18 +261,14 @@ class ContentIndexManager:
                     return True
         return False
 
-    # ──────────────────────────────────────
-    # 読み取り系
-    # ──────────────────────────────────────
+    # ── Read operations ───────────────────────────────────────────────────────
 
     def get_all(self, sort_by_importance: bool = True) -> list[dict]:
         """
-        全エントリを返す。
+        Return all entries.
 
         Args:
-            sort_by_importance: True の場合 importance_score 降順でソート
-        Returns:
-            list[dict]: エントリのリスト
+            sort_by_importance: Sort descending by importance_score if True.
         """
         data = self._load()
         entries = data.get("entries", [])
@@ -288,7 +276,7 @@ class ContentIndexManager:
             entries = sorted(
                 entries,
                 key=lambda e: (
-                    e.get("is_breaking", False),      # BREAKING優先
+                    e.get("is_breaking", False),       # breaking items first
                     e.get("importance_score") or 0.0,
                 ),
                 reverse=True,
@@ -296,20 +284,19 @@ class ContentIndexManager:
         return entries
 
     def get_by_module(self, module: str) -> list[dict]:
-        """
-        モジュール（"M1" or "M3"）でフィルタして返す。
-        """
+        """Filter entries by module ("M1" or "M3")."""
         return [e for e in self.get_all() if e.get("module") == module]
 
     def get_by_tags(self, tags: list[str], match_any: bool = True) -> list[dict]:
         """
-        topic_tags でフィルタして返す。
+        Filter entries by topic_tags.
 
         Args:
-            tags: 検索タグリスト
-            match_any: True=いずれか1つ一致 / False=すべて一致
+            tags: Tags to search for.
+            match_any: True = match any tag; False = match all tags.
+
         Returns:
-            importance_score 降順のエントリリスト
+            Entries sorted by importance_score descending.
         """
         tags_lower = [t.lower() for t in tags]
         result = []
@@ -324,21 +311,15 @@ class ContentIndexManager:
         return result
 
     def get_by_type(self, content_type: str) -> list[dict]:
-        """
-        type（"video" | "screenshot" | "image"）でフィルタして返す。
-        """
+        """Filter entries by type ("video" | "screenshot" | "image")."""
         return [e for e in self.get_all() if e.get("type") == content_type]
 
     def get_breaking(self) -> list[dict]:
-        """
-        is_breaking=True のエントリを返す。M4の緊急割り込み検知用。
-        """
+        """Return entries with is_breaking=True. Used by M4 for urgent interrupts."""
         return [e for e in self.get_all() if e.get("is_breaking")]
 
     def get_today(self) -> list[dict]:
-        """
-        本日（UTC）に生成されたエントリを返す。M4の起動時サマリ用。
-        """
+        """Return entries created today (UTC). Used by M4 for startup summary."""
         today = datetime.now(timezone.utc).date().isoformat()
         return [
             e for e in self.get_all()
@@ -346,9 +327,7 @@ class ContentIndexManager:
         ]
 
     def get_stats(self) -> dict:
-        """
-        インデックスの統計情報を返す（デバッグ・モニタリング用）。
-        """
+        """Return index statistics (for debugging and monitoring)."""
         entries = self.get_all(sort_by_importance=False)
         return {
             "total": len(entries),
@@ -365,25 +344,23 @@ class ContentIndexManager:
             "last_updated": self._load().get("last_updated"),
         }
 
-    # ──────────────────────────────────────
-    # 内部処理
-    # ──────────────────────────────────────
+    # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _ensure_file(self) -> None:
-        """content_index.json が存在しない場合は空ファイルを作成する"""
+        """Create an empty content_index.json if it does not exist."""
         if not self._path.exists():
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._save({"last_updated": None, "entries": []})
-            logger.info(f"[ContentIndex] ファイル作成: {self._path}")
+            logger.info(f"[ContentIndex] File created: {self._path}")
 
     def _load(self) -> dict:
-        """JSON を読み込んで返す"""
+        """Load and return the JSON index."""
         with open(self._path, encoding="utf-8") as f:
             return json.load(f)
 
     def _save(self, data: dict) -> None:
-        """JSON に書き込む（アトミックな上書き）"""
+        """Write JSON atomically via a temp file + rename."""
         tmp = self._path.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        tmp.replace(self._path)  # アトミックリネーム
+        tmp.replace(self._path)  # atomic rename

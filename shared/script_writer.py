@@ -1,9 +1,10 @@
 """
-STEP 4: ニュースブリーフィング原稿生成
-構造化JSONデータから:
-  - 全体ブリーフィング原稿（3-5分）
-  - トピック別ショートクリップ原稿（各30秒程度）
-を生成する。
+Phase 4: News briefing script generation.
+Produces from structured JSON data:
+  - A full briefing script (3–5 min)
+  - Per-topic short-clip scripts (~30 sec each)
+
+Output language is controlled by LANGUAGE in .env.
 """
 
 import json
@@ -12,11 +13,13 @@ import logging
 from google import genai
 from google.genai import types
 
+from .language_utils import get_language_config
+
 logger = logging.getLogger(__name__)
 
 
 def _strip_preamble(text: str) -> str:
-    """Geminiの応答から前置き・後書きメッセージを除去する。"""
+    """Remove preamble / postamble messages from a Gemini response."""
     if "\n---\n" in text:
         parts = text.split("\n---\n", 1)
         if len(parts) > 1 and len(parts[1].strip()) > 200:
@@ -29,7 +32,8 @@ def _strip_preamble(text: str) -> str:
         if (not stripped
             or stripped.startswith("---")
             or re.match(r'^(はい|承知|了解|かしこまり)', stripped)
-            or re.match(r'^\*\*.*原稿.*\*\*', stripped)
+            or re.match(r'^(Sure|Certainly|Of course|Here is|Here\'s)', stripped, re.IGNORECASE)
+            or re.match(r'^\*\*.*script.*\*\*', stripped, re.IGNORECASE)
             or re.match(r'^#+\s', stripped)
             or re.match(r'^(以下|下記|次の|それでは)', stripped) and i < 5):
             start_idx = i + 1
@@ -43,96 +47,103 @@ def _strip_preamble(text: str) -> str:
 
 def generate_briefing_script(client: genai.Client, briefing_data: dict) -> str:
     """
-    全体ブリーフィング原稿を生成する（3-5分、1200-1800文字）。
+    Generate a full briefing narration script (3–5 min, ~1200–1800 chars).
 
     Args:
-        client: 初期化済みの genai.Client
-        briefing_data: STEP 3で生成した構造化データ
+        client: Initialised genai.Client.
+        briefing_data: Structured data produced in Phase 3.
+
     Returns:
-        日本語ナレーション原稿テキスト
+        Narration script text in the configured output language.
     """
-    prompt = f"""以下の構造化データに基づいて、3〜5分の日本語ニュースブリーフィング原稿を出力せよ。
+    lang = get_language_config()
 
-【重要な制約】
-- 原稿本文のみを出力すること。前置き、挨拶、確認メッセージ、後書きは一切不要。
-- 「はい、承知しました」等の応答文は絶対に含めないこと。
-- Markdownの見出し（#, **, --- 等）は使用しないこと。
-- 最初の文字からナレーション原稿が始まること。
-- [IMAGE: ...] のようなマーカーや指示は一切含めないこと。純粋なナレーション原稿のみ。
+    prompt = f"""Based on the structured data below, write a 3–5 minute news briefing narration script in {lang.prompt_lang}.
 
-データ:
+[CRITICAL CONSTRAINTS]
+- Output the script body ONLY. No preamble, greeting, confirmation, or postamble.
+- Do NOT include phrases such as "Sure, here is..." or "Certainly!".
+- Do NOT use Markdown headings (#, **, --- etc.).
+- The very first character must be the start of the narration.
+- Do NOT include [IMAGE: ...] markers or any directives. Pure narration text only.
+
+Data:
 {json.dumps(briefing_data, indent=2, ensure_ascii=False)}
 
-原稿の構成:
-1. 冒頭: 本日の主要トピックの概要を2〜3文で述べる
-2. 本文: 各トピックについて報告する
-   - トピックごとに主要国の反応を2〜3文ずつ
-   - 国際社会の見解の相違を際立たせる
-   - データに含まれていない情報は絶対に追加しないこと
-3. 締め: 今後の影響に関する簡潔な分析で締めくくる
+Script structure:
+1. Opening: 2–3 sentences summarising today's key topics.
+2. Body: Report on each topic.
+   - 2–3 sentences per topic covering major countries' reactions.
+   - Highlight divergences in international opinion.
+   - Do NOT add information not present in the data.
+3. Closing: Brief analysis of likely impact.
 
-トーン: NHKワールドニュースのような落ち着いた報道トーン
-文字数: 1200〜1800文字（日本語）
-言語: 日本語"""
+Tone: Calm, authoritative broadcast news (NHK World / BBC style).
+Length: 1200–1800 characters (or equivalent in {lang.prompt_lang}).
+Language: {lang.prompt_lang}"""
 
-    logger.info("全体ブリーフィング原稿を生成中...")
+    logger.info("Generating full briefing script ...")
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(response_modalities=["TEXT"]),
     )
     script_text = _strip_preamble(response.text.strip())
-    logger.info(f"全体原稿生成完了: 約{len(script_text)}文字")
+    logger.info(f"Full script generated: ~{len(script_text)} chars.")
     return script_text
 
 
 def generate_clip_scripts(client: genai.Client, briefing_data: dict) -> list[dict]:
     """
-    トピック別ショートクリップ原稿を生成する（各30秒程度、200-300文字）。
+    Generate per-topic short-clip narration scripts (~30 sec, 200–300 chars).
 
     Args:
-        client: 初期化済みの genai.Client
-        briefing_data: STEP 3で生成した構造化データ
+        client: Initialised genai.Client.
+        briefing_data: Structured data produced in Phase 3.
+
     Returns:
+        List of dicts:
         [
             {
                 "topic_title": str,
-                "script": str,       # ナレーション原稿（日本語）
-                "image_prompt": str,  # クリップ用画像生成プロンプト（英語）
+                "script": str,        # narration in the configured language
+                "image_prompt": str,  # English image-generation prompt for the clip
             },
             ...
         ]
     """
+    lang = get_language_config()
+
     sections = briefing_data.get("briefing_sections", [])
     if not sections:
-        logger.warning("briefing_sections が空です。クリップ原稿を生成できません。")
+        logger.warning("briefing_sections is empty — cannot generate clip scripts.")
         return []
 
     clip_scripts = []
     for i, section in enumerate(sections):
-        topic_title = section.get("topic", f"トピック{i+1}")
-        logger.info(f"クリップ原稿 {i+1}/{len(sections)} を生成中: {topic_title}")
+        topic_title = section.get("topic", f"Topic {i+1}")
+        logger.info(f"Clip script {i+1}/{len(sections)}: {topic_title}")
 
         section_json = json.dumps(section, indent=2, ensure_ascii=False)
 
-        prompt = f"""以下のトピックデータに基づいて、約30秒のショートニュースクリップ用の日本語ナレーション原稿を出力せよ。
+        prompt = f"""Based on the topic data below, write a ~30-second short news clip narration script in {lang.prompt_lang}.
 
-【重要な制約】
-- 原稿本文のみを出力すること。前置きや応答文は一切不要。
-- 最初の文字からナレーション原稿が始まること。
-- Markdownは使わないこと。
+[CRITICAL CONSTRAINTS]
+- Output the script body ONLY. No preamble or response phrases.
+- The very first character must be the start of the narration.
+- Do NOT use Markdown.
 
-トピックデータ:
+Topic data:
 {section_json}
 
-原稿の構成:
-1. トピックの要点を1〜2文で述べる
-2. 主要国の反応を簡潔に報告（2〜3文）
-3. 一言で締めくくる
+Script structure:
+1. State the key point of the topic in 1–2 sentences.
+2. Briefly report major countries' reactions (2–3 sentences).
+3. One closing sentence.
 
-文字数: 200〜300文字（日本語）
-トーン: NHKワールドニュースのような落ち着いた報道トーン
-言語: 日本語のみ"""
+Length: 200–300 characters (or equivalent in {lang.prompt_lang}).
+Tone: Calm, authoritative broadcast news style.
+Language: {lang.prompt_lang}"""
 
         try:
             response = client.models.generate_content(
@@ -142,13 +153,16 @@ def generate_clip_scripts(client: genai.Client, briefing_data: dict) -> list[dic
             )
             script = _strip_preamble(response.text.strip())
         except Exception as e:
-            logger.error(f"  クリップ原稿生成失敗: {e}")
-            script = f"{topic_title}に関する最新情報をお伝えします。詳細は全体ブリーフィングをご覧ください。"
+            logger.error(f"  Clip script generation failed: {e}")
+            script = (
+                f"Here is the latest on {topic_title}. "
+                f"Please refer to the full briefing for details."
+            )
 
-        # クリップ用画像プロンプト（抽象的・非写実的な指示のみ）
+        # Image prompt for the clip (abstract / non-realistic only)
         image_prompt = (
             f"Topic title card for news broadcast. "
-            f"Show the topic name '{topic_title}' prominently in Japanese. "
+            f"Show the topic name '{topic_title}' prominently. "
             f"Use abstract icons and symbols related to the topic (map icons, flag icons, arrows). "
             f"Flat design, diagram style only. "
             f"Do NOT include any photorealistic imagery, people, buildings, or weapons. "
@@ -160,7 +174,7 @@ def generate_clip_scripts(client: genai.Client, briefing_data: dict) -> list[dic
             "script": script,
             "image_prompt": image_prompt,
         })
-        logger.info(f"  -> {len(script)}文字")
+        logger.info(f"  -> {len(script)} chars.")
 
-    logger.info(f"クリップ原稿生成完了: {len(clip_scripts)}件")
+    logger.info(f"Clip scripts complete: {len(clip_scripts)} item(s).")
     return clip_scripts

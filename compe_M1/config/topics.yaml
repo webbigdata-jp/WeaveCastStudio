@@ -1,11 +1,14 @@
-# WeaveCast M1 — トピック定義
+# WeaveCast M1 — Topic definitions
 #
-# 全トピックを一括処理し、以下を生成する:
-#   - 全体ブリーフィング動画（3-5分）
-#   - トピック別ショートクリップ（各30秒程度）
-#   - 「本日のニュース一覧」画像
+# All topics are processed in bulk to produce:
+#   - A full briefing video (3–5 min)
+#   - Per-topic short clips (~30 sec each)
+#   - A "Today's News" lineup image
 #
-# search_countries はヒント。指定がなくても世界各国の視点を検索に含める。
+# search_countries: search hints only — other countries may also be included.
+# title_en:          English topic name (used for Gemini search queries and internal keys).
+# title_target_lang: Display name in the output language (set via LANGUAGE in .env).
+#                    Used for on-screen titles, narration, and image captions.
 
 search_countries:
   - "United States"
@@ -15,37 +18,33 @@ search_countries:
   - "China"
 
 topics:
-  - title: "ホルムズ海峡封鎖"
-    title_en: "Strait of Hormuz blockade"
+  - title_en: "Strait of Hormuz blockade"
+    title_target_lang: "ホルムズ海峡封鎖"
     query_keywords:
       - "Strait of Hormuz blockade 2026"
       - "Iran Hormuz closure shipping"
     importance_score: 9.0
     tags: ["hormuz", "iran", "shipping", "military"]
 
-  - title: "イラン新最高指導者"
-    title_en: "New Iranian Supreme Leader"
+  - title_en: "New Iranian Supreme Leader"
+    title_target_lang: "イラン新最高指導者"
     query_keywords:
       - "New Iranian Supreme Leader 2026"
       - "Mojtaba Khamenei supreme leader"
     importance_score: 8.5
     tags: ["iran", "leadership", "politics"]
 
-  - title: "アメリカ軍 損失"
-    title_en: "US military losses"
+  - title_en: "US military losses"
+    title_target_lang: "アメリカ軍 損失"
     query_keywords:
       - "Iran's counterattack against the United States 2026"
       - "Losses of US Air Force aircraft"
     importance_score: 8.5
-    tags: ["military", "Damage", "war"]
+    tags: ["military", "damage", "war"]
 
-
-  - title: "イラン女子校への空爆"
-    title_en: "Airstrikes on girls schools in Iran"
+  - title_en: "Airstrikes on girls schools in Iran"
+    title_target_lang: "イラン女子校への空爆"
     query_keywords:
       - "Airstrikes on girls schools in Iran 2026"
     importance_score: 9.5
     tags: ["iran", "airstrikes", "civilian", "humanitarian"]
-    
-    
-    

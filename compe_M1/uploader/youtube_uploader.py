@@ -1,13 +1,14 @@
 """
-STEP 8: YouTubeアップロード
-生成した動画をYouTube Data API v3でアップロードする。
+Phase 8: YouTube upload.
+Uploads a generated video to YouTube using the YouTube Data API v3.
 
-事前準備:
-  1. Google Cloud ConsoleでYouTube Data API v3を有効化
-  2. OAuth2 Client ID (Desktop application) を作成してJSONをダウンロード
-  3. 初回実行時にブラウザで認証 → config/youtube_token.json が自動生成される
+Prerequisites:
+  1. Enable the YouTube Data API v3 in Google Cloud Console.
+  2. Create an OAuth2 Client ID (Desktop application) and download the JSON.
+  3. On first run, authenticate via browser -> config/youtube_token.json is
+     created automatically.
 
-クォータ: 1動画アップロード = 1,600ユニット / デフォルト上限 10,000ユニット/日
+Quota: 1 video upload = 1,600 units / default daily quota = 10,000 units.
 """
 
 import logging
@@ -32,27 +33,25 @@ def _get_credentials(
     token_path: Path,
 ) -> Credentials:
     """
-    OAuth2認証フローを処理してCredentialsを返す。
-    token.jsonが存在すればそこから読み込み、なければブラウザ認証を行う。
+    Handle the OAuth2 authentication flow and return Credentials.
+    Loads from token.json if it exists; otherwise opens a browser for auth.
     """
     creds = None
 
     if token_path.exists():
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
-    # トークンが無効または期限切れの場合
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            logger.info("Refreshing expired token...")
+            logger.info("Refreshing expired token ...")
             creds.refresh(Request())
         else:
-            logger.info("Starting OAuth2 flow (browser will open)...")
+            logger.info("Starting OAuth2 flow (browser will open) ...")
             flow = InstalledAppFlow.from_client_secrets_file(
                 str(client_secrets_path), SCOPES
             )
             creds = flow.run_local_server(port=0)
 
-        # トークンを保存
         with open(str(token_path), "w") as f:
             f.write(creds.to_json())
         logger.info(f"Token saved to {token_path}")
@@ -65,20 +64,20 @@ def upload_to_youtube(
     briefing_data: dict,
     client_secrets_path: Path,
     token_path: Path,
-    privacy_status: str = "unlisted",  # テスト時は "unlisted" 推奨
+    privacy_status: str = "unlisted",  # Use "unlisted" for testing
 ) -> str:
     """
-    動画をYouTubeにアップロードしてvideo_idを返す。
+    Upload a video to YouTube and return its video_id.
 
     Args:
-        video_path: アップロードするMP4ファイルのパス
-        briefing_data: STEP 3の構造化データ（メタデータ生成に使用）
-        client_secrets_path: OAuth2クライアントシークレットJSONのパス
-        token_path: トークン保存先パス（初回は自動生成）
-        privacy_status: "public" | "unlisted" | "private"
+        video_path: Path to the MP4 file to upload.
+        briefing_data: Structured data from Phase 3 (used to build metadata).
+        client_secrets_path: Path to the OAuth2 client secrets JSON.
+        token_path: Token save path (auto-created on first run).
+        privacy_status: "public" | "unlisted" | "private".
 
     Returns:
-        YouTube video ID
+        YouTube video ID.
     """
     creds = _get_credentials(client_secrets_path, token_path)
     youtube = build(
@@ -93,7 +92,7 @@ def upload_to_youtube(
     date_str = briefing_data.get("generated_at", "")[:10]
     analysis = briefing_data.get("analysis", {})
 
-    # --- サマリ文 ---
+    # Summary block
     overall_summary = analysis.get("summary", "")
     consensus = analysis.get("consensus_points", [])
     divergence = analysis.get("divergence_points", [])
@@ -108,7 +107,7 @@ def upload_to_youtube(
         summary_block += "⚡ Points of Divergence:\n"
         summary_block += "\n".join(f"  • {p}" for p in divergence) + "\n\n"
 
-    # --- 国別スタンス一覧 ---
+    # Per-country stance list
     stance_lines = []
     for s in sections:
         stance_emoji = {
@@ -118,9 +117,12 @@ def upload_to_youtube(
         stance_lines.append(
             f"{stance_emoji} {s['country']}: {s.get('position', '')}"
         )
-    stance_block = "🌍 COUNTRY POSITIONS\n" + "\n".join(stance_lines) + "\n\n" if stance_lines else ""
+    stance_block = (
+        "🌍 COUNTRY POSITIONS\n" + "\n".join(stance_lines) + "\n\n"
+        if stance_lines else ""
+    )
 
-    # --- 引用元URL一覧 ---
+    # Source URL list
     url_lines = []
     seen_urls = set()
     for s in sections:
@@ -128,12 +130,15 @@ def upload_to_youtube(
             if url and url not in seen_urls:
                 url_lines.append(f"  • {s['country']}: {url}")
                 seen_urls.add(url)
-        # source_urlsがない場合はsource_urlを使う（後方互換）
+        # Backward-compat: also check legacy source_url field
         single_url = s.get("source_url")
         if single_url and single_url not in seen_urls:
             url_lines.append(f"  • {s['country']}: {single_url}")
             seen_urls.add(single_url)
-    sources_block = "🔗 SOURCES\n" + "\n".join(url_lines) + "\n\n" if url_lines else ""
+    sources_block = (
+        "🔗 SOURCES\n" + "\n".join(url_lines) + "\n\n"
+        if url_lines else ""
+    )
 
     title = f"[StoryWire] Global Response: {briefing_data['topic']} — {date_str}"
 
@@ -166,7 +171,7 @@ def upload_to_youtube(
         "status": {
             "privacyStatus": privacy_status,
             "selfDeclaredMadeForKids": False,
-            "containsSyntheticMedia": True,  # AI生成コンテンツフラグ
+            "containsSyntheticMedia": True,  # AI-generated content flag
         },
     }
 
@@ -175,7 +180,7 @@ def upload_to_youtube(
         str(video_path),
         mimetype="video/mp4",
         resumable=True,
-        chunksize=10 * 1024 * 1024,  # 10MB chunks
+        chunksize=10 * 1024 * 1024,  # 10 MB chunks
     )
 
     try:

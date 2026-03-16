@@ -1,77 +1,77 @@
 # WeaveCastStudio M1
 
-各国政府公式見解の収集・要約・画像生成・音読・動画化・ContentIndex登録を行うパイプライン。  
-全トピックを一括処理し、**全体ブリーフィング動画**と**トピック別ショートクリップ**を生成する。
+Pipeline for collecting official government statements, summarising them, generating images and narration, composing videos, and registering everything to ContentIndex.
+Processes all topics in a single run to produce a **full briefing video** and **per-topic short clips**.
 
 ---
 
-## システムフロー
+## System Flow
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                        M1 パイプライン概要                                │
+│                          M1 Pipeline Overview                            │
 │                                                                          │
-│  [STEP 1] トピック定義 (config/topics.yaml)                              │
-│      │    search_countries + topics[] を読み込み                          │
+│  [STEP 1] Topic definitions (config/topics.yaml)                        │
+│      │    Load search_countries + topics[]                               │
 │      ▼                                                                   │
-│  [STEP 2] 各国政府公式見解の収集                                          │
-│      │  ├─ Gemini 2.5 Flash + Google Search Tool → URL・要約テキスト取得  │
-│      │  ├─ DrissionPage (Chrome) → URLをブラウザで開いてページ本文取得     │
-│      │  ├─ スクリーンショット保存 → output/.../data/screenshots/          │
-│      │  └─ Gemini 2.5 Flash → ページ本文から要点を再抽出                  │
+│  [STEP 2] Collect official statements                                   │
+│      │  ├─ Gemini 2.5 Flash + Google Search Tool → URLs + summary text  │
+│      │  ├─ DrissionPage (Chrome) → fetch page body + screenshots        │
+│      │  ├─ Screenshots saved → output/.../data/screenshots/             │
+│      │  └─ Gemini 2.5 Flash → re-extract key points from page body      │
 │      │                                                                   │
 │      ▼                                                                   │
-│  [STEP 3] 構造化要約の生成 (Gemini 2.5 Flash — JSON出力)                 │
-│      │  └─ 各国見解を統一JSONスキーマに変換 + URL一覧を保持               │
+│  [STEP 3] Structured summary generation (Gemini 2.5 Flash — JSON out)  │
+│      │  └─ Convert per-country statements to unified JSON schema        │
 │      │                                                                   │
 │      ▼                                                                   │
-│  [STEP 4] ニュースブリーフィング原稿生成 (Gemini 2.5 Flash)               │
-│      │  ├─ 全体ブリーフィング原稿 (script.txt)                           │
-│      │  └─ トピック別クリップ原稿 (clip_scripts.json)                    │
+│  [STEP 4] Narration script generation (Gemini 2.5 Flash)               │
+│      │  ├─ Full briefing script (script.txt)                            │
+│      │  └─ Per-topic clip scripts (clip_scripts.json)                   │
 │      │                                                                   │
 │      ▼                                                                   │
-│  [STEP 5] 画像生成 (Gemini Image Generation)                             │
-│      │  ├─ タイトルスライド                                               │
-│      │  ├─ ニュース一覧画像（本日のトピック一覧）                         │
-│      │  ├─ コンテンツスライド（トピックごと）                             │
-│      │  └─ クリップ用画像（トピックごと）                                 │
+│  [STEP 5] Image generation (Gemini Image Generation)                    │
+│      │  ├─ Title slide                                                   │
+│      │  ├─ News lineup image (today's topics)                           │
+│      │  ├─ Content slides (one per topic)                               │
+│      │  └─ Clip images (one per topic)                                  │
 │      │                                                                   │
 │      ▼                                                                   │
-│  [STEP 6] ナレーション音声生成 (Gemini TTS)                              │
-│      │  ├─ 全体ブリーフィング音声                                         │
-│      │  ├─ クリップ音声（トピックごと）                                   │
-│      │  └─ 失敗時は指数バックオフでリトライ（最大4回）                    │
+│  [STEP 6] Narration audio generation (Gemini TTS)                      │
+│      │  ├─ Full briefing audio                                           │
+│      │  ├─ Per-topic clip audio                                          │
+│      │  └─ Exponential backoff retry on failure (max 4 attempts)        │
 │      │                                                                   │
 │      ▼                                                                   │
-│  [STEP 7] 動画合成 (ffmpeg)                                              │
-│      │  ├─ 全体ブリーフィング動画 (1920x1080 / H.264 / AAC)              │
-│      │  └─ トピック別ショートクリップ動画                                 │
+│  [STEP 7] Video composition (ffmpeg)                                    │
+│      │  ├─ Full briefing video (1920×1080 / H.264 / AAC)               │
+│      │  └─ Per-topic short clip videos                                  │
 │      │                                                                   │
 │      ▼                                                                   │
-│  [STEP 8] ContentIndex登録                                               │
-│           ├─ 全体ブリーフィング動画を登録                                 │
-│           ├─ クリップ動画を個別登録                                       │
-│           ├─ ニュース一覧画像を登録                                       │
-│           └─ manifest.json を更新                                        │
+│  [STEP 8] ContentIndex registration                                     │
+│           ├─ Register full briefing video                               │
+│           ├─ Register each clip video individually                      │
+│           ├─ Register news lineup image                                 │
+│           └─ Update manifest.json                                       │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### データフロー
+### Data Flow
 
 ```
 config/topics.yaml
     │
     ▼
 [Phase 1] shared/source_collector.py ──→ output/.../data/raw_statements.json
-              │                                {topic: {country: {text, urls}}}
+              │                                {topic_en: {text, urls}}
               │                          output/.../data/screenshots/*.png
               ▼
           shared/summarizer.py ────────→ output/.../data/briefing_data.json
                                                {briefing_sections[], analysis{}}
     │
     ▼
-[Phase 2] shared/script_writer.py ─────→ output/.../data/script.txt        (全体原稿)
-              │                          output/.../data/clip_scripts.json  (クリップ原稿)
+[Phase 2] shared/script_writer.py ─────→ output/.../data/script.txt        (full script)
+              │                          output/.../data/clip_scripts.json  (clip scripts)
               ▼
           shared/image_generator.py ───→ output/.../images/slide_title.png
                                          output/.../images/news_lineup.png
@@ -80,122 +80,131 @@ config/topics.yaml
                                          output/.../data/image_manifest.json
     │
     ▼
-[Phase 3] shared/narrator.py ──────────→ output/.../audio/segment_*.wav    (全体音声)
-                                         output/.../clips/clip_*/          (クリップ音声)
+[Phase 3] shared/narrator.py ──────────→ output/.../audio/segment_*.wav    (full audio)
+                                         output/.../clips/clip_*/          (clip audio)
                                          output/.../data/audio_manifest.json
     │
     ▼
-[Phase 4] shared/video_composer.py ────→ output/.../briefing.mp4           (全体動画)
-                                         output/.../video/clips/clip_*.mp4 (クリップ動画)
+[Phase 4] shared/video_composer.py ────→ output/.../briefing.mp4           (full video)
+                                         output/.../video/clips/clip_*.mp4 (clip videos)
                                          output/.../manifest.json
     │
     ▼
-[Phase 5] content_index.py ────────────→ content_index.json (プロジェクトルート)
-              │                          └─ M4 がこのファイルを参照して再生
+[Phase 5] content_index.py ────────────→ content_index.json (project root)
+              │                          └─ M4 reads this file for playback
               ▼
-          (オプション) YouTube アップロード
+          (optional) YouTube upload
 ```
 
-> **出力ディレクトリ**: Phase 実行ごとにタイムスタンプ付きディレクトリ  
-> `output/briefing_YYYYMMDD_HHMMSS/` が作成される。  
-> `--output-dir` で既存ディレクトリを再利用可能。
+> **Output directory**: A timestamped directory `output/briefing_YYYYMMDD_HHMMSS/` is
+> created for each run. Use `--output-dir` to reuse an existing directory.
 
 ---
 
-## セットアップ
+## Setup
 
-### 1. 依存パッケージのインストール
+### 1. Install dependencies
 
-プロジェクトルートで `uv sync` を実行する。M1 固有の追加インストールは不要。
+Run `uv sync` from the project root. No M1-specific extras are required.
 
 ```bash
 cd WeaveCastStudio
 uv sync
 ```
 
-### 2. Chrome / Chromiumのインストール（DrissionPageに必要）
+### 2. Install Chrome / Chromium (required by DrissionPage)
 
 ```bash
 # Ubuntu/Debian (GCE)
 sudo apt install chromium-browser
 
 # Windows
-# Chrome または Edge がインストールされていれば動作する
+# Chrome or Edge already installed is sufficient.
 ```
 
-### 3. ffmpegのインストール
+### 3. Install ffmpeg
 
 ```bash
 # Ubuntu/Debian (GCE)
 sudo apt install ffmpeg
 
 # Windows
-# https://www.gyan.dev/ffmpeg/builds/ からダウンロードしてPATHに追加
+# Download from https://www.gyan.dev/ffmpeg/builds/ and add to PATH.
 ```
 
-### 4. 環境変数の設定
+### 4. Configure environment variables
 
-プロジェクトルートの `.env` に `GOOGLE_API_KEY` を設定する（全モジュール共通）。
+Copy `.env.sample` to `.env` at the project root and fill in the values (shared by all modules).
 
 ```bash
-cat > .env << 'EOF'
-GOOGLE_API_KEY=your_api_key_here
-EOF
+cp .env.sample .env
+# Edit .env: set GOOGLE_API_KEY and LANGUAGE
 ```
 
-### 5. YouTube OAuth2の設定（YouTubeアップロードを使う場合のみ）
+```ini
+GOOGLE_API_KEY=your_api_key_here
+LANGUAGE=ja   # BCP-47 language code (e.g. ja / en / ko / zh)
+```
 
-1. [Google Cloud Console](https://console.cloud.google.com/) で **YouTube Data API v3** を有効化
-2. 「認証情報」→「OAuth 2.0 クライアント ID」→「**デスクトップ アプリ**」で作成
-3. ダウンロードしたJSONを `compe_M1/config/youtube_client_secrets.json` として保存
-4. 初回実行時にブラウザが開いて認証フロー → `config/youtube_token.json` が自動生成
-5. 以降はトークンの自動リフレッシュで再認証不要
+`LANGUAGE` controls the output language across all modules.
+`shared/language_utils.py` automatically converts the BCP-47 code (e.g. `ja`) used by
+the Live API into a natural-language name (e.g. `Japanese`) injected into Gemini prompts,
+so narration scripts, image captions, and summaries are all generated in the chosen language.
+Full list of supported codes: https://ai.google.dev/gemini-api/docs/live-api/capabilities#supported-languages
+
+### 5. YouTube OAuth2 setup (only if YouTube upload is needed)
+
+1. Enable **YouTube Data API v3** in [Google Cloud Console](https://console.cloud.google.com/).
+2. Go to Credentials → OAuth 2.0 Client IDs → create a **Desktop application** credential.
+3. Save the downloaded JSON as `compe_M1/config/youtube_client_secrets.json`.
+4. On first run, a browser window opens for the OAuth flow → `config/youtube_token.json` is created automatically.
+5. Subsequent runs use automatic token refresh — no re-authentication needed.
 
 ---
 
-## 使い方
+## Usage
 
-### 段階的に実行する（推奨・デバッグしやすい）
+### Run phases individually (recommended for debugging)
 
 ```bash
 cd compe_M1
 
-# Phase 1: 情報収集 + 構造化要約
+# Phase 1: Information collection + structured summary
 uv run main.py --phase 1
 
-# Phase 2: 原稿生成 + 画像生成
+# Phase 2: Script generation + image generation
 uv run main.py --phase 2
 
-# Phase 3: TTS 音声生成
+# Phase 3: TTS audio generation
 uv run main.py --phase 3
 
-# Phase 4: 動画合成
+# Phase 4: Video composition
 uv run main.py --phase 4
 
-# Phase 5: ContentIndex 登録
+# Phase 5: ContentIndex registration
 uv run main.py --phase 5
 ```
 
-### 全フェーズをまとめて実行
+### Run all phases at once
 
 ```bash
-uv run main.py                 # Phase 1〜5 すべて実行
-uv run main.py --skip-upload   # Phase 1〜5（YouTubeアップロードなし）
+uv run main.py                 # Phases 1–5
+uv run main.py --skip-upload   # Phases 1–5 (ContentIndex only, no YouTube upload)
 ```
 
-### トピックを切り替える
+### Switch topics
 
-`config/topics.yaml` を編集してトピックを定義する。  
-デフォルトでは全トピックを一括処理する。特定トピックのみ処理する場合は `--topic-index` を指定する。
+Edit `config/topics.yaml` to define topics.
+By default all topics are processed together. Use `--topic-index` to process a single topic.
 
 ```bash
-uv run main.py --phase 1 --topic-index 0   # 最初のトピックのみ
-uv run main.py --phase 1 --topic-index 1   # 2番目のトピックのみ
+uv run main.py --phase 1 --topic-index 0   # First topic only
+uv run main.py --phase 1 --topic-index 1   # Second topic only
 ```
 
-### 既存の出力ディレクトリを再利用する
+### Reuse an existing output directory
 
-Phase 1 の出力を使って Phase 2 以降だけやり直す場合に便利。
+Useful when re-running Phase 2 onwards without repeating Phase 1.
 
 ```bash
 uv run main.py --phase 2 --output-dir output/briefing_20260310_172523
@@ -203,12 +212,12 @@ uv run main.py --phase 2 --output-dir output/briefing_20260310_172523
 
 ---
 
-## topics.yaml の書き方
+## topics.yaml Reference
 
-`config/topics.yaml` でトピックを定義する。サンプル構成:
+Topics are defined in `config/topics.yaml`. Example:
 
 ```yaml
-# search_countries: 検索対象の国（ヒント。ここにない国も検索に含まれる場合がある）
+# search_countries: search hints — other countries may also appear in results
 search_countries:
   - "United States"
   - "Iran"
@@ -217,141 +226,146 @@ search_countries:
   - "China"
 
 topics:
-  - title: "トピック日本語名"
-    title_en: "Topic English Name"
+  - title_en: "Strait of Hormuz blockade"    # used for Gemini search queries and as internal key
+    title_target_lang: "ホルムズ海峡封鎖"      # display name in the output language (set via LANGUAGE)
     query_keywords:
-      - "search keyword 1"
-      - "search keyword 2"
-    importance_score: 8.5       # 0.0〜10.0（ContentIndex での優先度に影響）
-    tags: ["tag1", "tag2"]      # M4 での検索・フィルタ用
+      - "Strait of Hormuz blockade 2026"
+      - "Iran Hormuz closure shipping"
+    importance_score: 8.5       # 0.0–10.0 (affects ContentIndex priority)
+    tags: ["hormuz", "iran", "shipping", "military"]   # used for M4 search/filter
 ```
 
-`topics` リストの各エントリが1つのニューストピックに対応する。  
-全トピックに対して全体ブリーフィング動画 1 本 + トピック別クリップ動画が生成される。
+| Field | Purpose |
+|-------|---------|
+| `title_en` | Used for Gemini search query construction and as the `raw_statements` dict key. Always in English. |
+| `title_target_lang` | On-screen display name, narration script, and image captions. Write in the language matching your `LANGUAGE` setting. |
+
+Each entry in the `topics` list produces one full briefing section and one short clip video.
 
 ---
 
-## 使用モデル・ツール
+## Models & Tools
 
-| STEP | ツール／モデル | 用途 |
-|------|--------------|------|
-| 2 | Gemini 2.5 Flash + Google Search Tool | 各国見解・URL収集 |
-| 2 | **DrissionPage** (Chrome自動化) | URLをブラウザで開きページ本文・スクリーンショット取得 |
-| 2 | Gemini 2.5 Flash | ページ本文から要点を再抽出 |
-| 3 | Gemini 2.5 Flash | 構造化JSON要約 |
-| 4 | Gemini 2.5 Flash | ナレーション原稿生成（全体 + クリップ） |
-| 5 | Gemini Image Generation | タイトル・一覧・コンテンツ・クリップ画像生成 |
-| 6 | Gemini TTS | 音声合成（全体 + クリップ） |
-| 7 | ffmpeg | 画像+音声→MP4動画合成 |
-| 8 | content_index.py | M4向けコンテンツ登録 |
-
----
-
-## エラーハンドリング
-
-| STEP | 失敗シナリオ | 対処 |
-|------|------------|------|
-| STEP 2 (Gemini Search) | 検索結果なし | その国をスキップ |
-| STEP 2 (DrissionPage) | ページ取得失敗 | Gemini検索結果のみで続行 |
-| STEP 3 | JSON parse失敗 | 最大3回リトライ → フォールバック構造で続行 |
-| STEP 5 | 画像生成失敗 | 単色プレースホルダー画像で代替 |
-| STEP 6 | TTS失敗 | 指数バックオフで最大4回リトライ（5s→10s→20s→40s） |
-| STEP 6 | 全リトライ失敗 | 3秒無音WAVをプレースホルダーとして挿入（動画合成を継続） |
-| STEP 7 | ffmpeg失敗 | エラーログ出力・手動確認 |
+| STEP | Tool / Model | Purpose |
+|------|-------------|---------|
+| 2 | Gemini 2.5 Flash + Google Search Tool | Collect statements and URLs |
+| 2 | **DrissionPage** (Chrome automation) | Open URLs in browser, retrieve page body and screenshots |
+| 2 | Gemini 2.5 Flash | Re-extract key points from page body |
+| 3 | Gemini 2.5 Flash | Structured JSON summary |
+| 4 | Gemini 2.5 Flash | Narration script generation (full + clips) |
+| 5 | Gemini Image Generation | Title, lineup, content, and clip image generation |
+| 6 | Gemini TTS | Speech synthesis (full + clips) |
+| 7 | ffmpeg | Image + audio → MP4 video composition |
+| 8 | content_index.py | Register content for M4 playback |
 
 ---
 
-## ディレクトリ構成
+## Error Handling
+
+| STEP | Failure scenario | Behaviour |
+|------|-----------------|-----------|
+| STEP 2 (Gemini Search) | No search results | Skip that topic |
+| STEP 2 (DrissionPage) | Page fetch failure | Continue with Gemini search results only |
+| STEP 3 | JSON parse failure | Retry up to 3 times → continue with fallback structure |
+| STEP 5 | Image generation failure | Substitute solid-colour placeholder image |
+| STEP 6 | TTS failure | Exponential backoff, up to 4 retries (5s → 10s → 20s → 40s) |
+| STEP 6 | All retries exhausted | Insert 3-second silent WAV placeholder to keep video composition running |
+| STEP 7 | ffmpeg failure | Log error and exit — manual inspection required |
+
+---
+
+## Directory Structure
 
 ```
 WeaveCastStudio/
-├── .env                           # GOOGLE_API_KEY（全モジュール共通）
-├── content_index.py               # M1/M3 → M4 共有コンテンツ登録
-├── content_index.json             # ↑が管理するインデックスファイル（自動生成）
-├── shared/                        # M1/M3 共通パイプラインモジュール
-│   ├── source_collector.py        #   STEP 2: 情報収集 (Gemini + DrissionPage)
-│   ├── summarizer.py              #   STEP 3: 構造化JSON要約
-│   ├── script_writer.py           #   STEP 4: ナレーション原稿生成
-│   ├── image_generator.py         #   STEP 5: 画像生成
-│   ├── narrator.py                #   STEP 6: TTS音声合成（リトライ付き）
-│   └── video_composer.py          #   STEP 7: ffmpeg動画合成
+├── .env                           # GOOGLE_API_KEY + LANGUAGE (shared by all modules)
+├── .env.sample                    # Template for .env
+├── content_index.py               # Shared content registry: M1/M3 → M4
+├── content_index.json             # Index file managed by content_index.py (auto-generated)
+├── shared/                        # Common pipeline modules for M1/M3
+│   ├── language_utils.py          #   BCP-47 language config loader (reads LANGUAGE from .env)
+│   ├── source_collector.py        #   STEP 2: Information collection (Gemini + DrissionPage)
+│   ├── summarizer.py              #   STEP 3: Structured JSON summary
+│   ├── script_writer.py           #   STEP 4: Narration script generation
+│   ├── image_generator.py         #   STEP 5: Image generation
+│   ├── narrator.py                #   STEP 6: TTS audio synthesis (with retry)
+│   └── video_composer.py          #   STEP 7: ffmpeg video composition
 │
-├── compe_M1/                      # ← このモジュール
-│   ├── main.py                    # パイプライン実行スクリプト
-│   ├── README.md                  # このファイル
+├── compe_M1/                      # ← This module
+│   ├── main.py                    # Pipeline entry point
+│   ├── README.md                  # This file (English)
+│   ├── README_ja.md               # Japanese version
 │   ├── config/
-│   │   ├── topics.yaml            # トピック定義（ユーザーが適宜編集）
-│   │   ├── youtube_client_secrets.json  # YouTube OAuth2（要手動配置）
-│   │   └── youtube_token.json     # OAuth2トークン（初回認証後に自動生成）
+│   │   ├── topics.yaml            # Topic definitions (edit as needed)
+│   │   ├── youtube_client_secrets.json  # YouTube OAuth2 (place manually)
+│   │   └── youtube_token.json     # OAuth2 token (auto-generated on first auth)
 │   ├── uploader/
-│   │   └── youtube_uploader.py    # YouTube アップロード
+│   │   └── youtube_uploader.py    # YouTube upload
 │   └── output/
-│       └── briefing_YYYYMMDD_HHMMSS/   # Phase実行ごとに生成
+│       └── briefing_YYYYMMDD_HHMMSS/   # Created per run
 │           ├── data/
-│           │   ├── raw_statements.json  # Phase 1 出力
-│           │   ├── briefing_data.json   # Phase 1 出力
-│           │   ├── script.txt           # Phase 2 出力（全体原稿）
-│           │   ├── clip_scripts.json    # Phase 2 出力（クリップ原稿）
-│           │   ├── image_manifest.json  # Phase 2 出力
-│           │   ├── audio_manifest.json  # Phase 3 出力
-│           │   └── screenshots/         # Phase 1 スクリーンショット
-│           ├── images/                  # Phase 2 生成画像
-│           ├── audio/                   # Phase 3 生成音声
+│           │   ├── raw_statements.json  # Phase 1 output
+│           │   ├── briefing_data.json   # Phase 1 output
+│           │   ├── script.txt           # Phase 2 output (full script)
+│           │   ├── clip_scripts.json    # Phase 2 output (clip scripts)
+│           │   ├── image_manifest.json  # Phase 2 output
+│           │   ├── audio_manifest.json  # Phase 3 output
+│           │   └── screenshots/         # Phase 1 screenshots
+│           ├── images/                  # Phase 2 generated images
+│           ├── audio/                   # Phase 3 generated audio
 │           ├── video/
-│           │   └── clips/               # Phase 4 クリップ動画
+│           │   └── clips/               # Phase 4 clip videos
 │           ├── clips/
-│           │   └── clip_001/            # クリップ別作業ディレクトリ
+│           │   └── clip_001/            # Per-clip working directory
 │           │       ├── image.png
 │           │       ├── script.txt
 │           │       └── *.wav
-│           ├── briefing.mp4             # Phase 4 全体動画
-│           └── manifest.json            # 全Phase の成果物パス一覧
+│           ├── briefing.mp4             # Phase 4 full video
+│           └── manifest.json            # Artifact paths for all phases
 ```
 
 ---
 
-## Windows上での実行（M4ライブ中の利用）
+## Running on Windows (alongside M4 live broadcast)
 
-M1 は GCE 上での定期実行を主な想定としているが、Windows 上でも動作する。  
-M4 でライブ配信中に M1 を並行実行すれば、最新のブリーフィングやクリップを  
-ContentIndex 経由で M4 に差し込むことができる。
+M1 is primarily designed for scheduled execution on GCE, but it runs on Windows as well.
+Running M1 in parallel with an M4 live broadcast lets you push fresh briefings and clips
+into ContentIndex mid-stream.
 
-### 動作要件
+### Requirements
 
-- **Chrome / Edge** がインストールされていること（DrissionPage が使用）
-- **ffmpeg** にPATHが通っていること
-- OBS + M4 + M1 の同時起動になるため、**メモリ 16GB 以上を推奨**  
-  （特に Phase 1 でブラウザ自動化が走る間は CPU・メモリ負荷が高くなる）
+- **Chrome or Edge** installed (used by DrissionPage)
+- **ffmpeg** on PATH
+- **16 GB RAM or more recommended** when running OBS + M4 + M1 simultaneously
+  (Phase 1 browser automation is CPU- and memory-intensive)
 
-### ContentIndex の同時アクセスについて
+### Concurrent access to ContentIndex
 
-`content_index.py` はスレッドセーフ（`threading.Lock`）かつアトミックリネームで  
-書き込みを行うため、M4 が読み取り中に M1 が書き込んでもファイルが壊れることはない。
+`content_index.py` uses `threading.Lock` and atomic file rename for writes, so M4 reading
+while M1 writes will not corrupt the file. However, if M1 (`add_entry`) and M4 (`mark_used`)
+write at almost exactly the same time, one change may be lost since there is no cross-process
+lock. In practice this race condition is extremely rare, but worth noting.
 
-ただし、M1 と M4 が**同時に書き込む**（M1 が `add_entry`、M4 が `mark_used` を  
-ほぼ同時に呼ぶ）場合、プロセス間ロックがないため片方の変更が失われる可能性がある。  
-実運用ではこのタイミングが重なる頻度は極めて低いが、留意すること。
+### Operational patterns
 
-### 運用パターン例
-
-- **GCE で Phase 1 まで実行** → GCS 経由でデータを pull → **Windows で Phase 2〜5**  
-  （Phase 1 のブラウザ自動化だけ GCE に任せ、Windows の負荷を軽減する）
-- **Windows で全 Phase 実行**  
-  （GCS 同期なしで完結。ただしリソース消費に注意）
+- **Run Phase 1 on GCE only** → pull data via GCS → **run Phases 2–5 on Windows**
+  (offload browser automation to GCE and reduce Windows resource usage)
+- **Run all phases on Windows**
+  (no GCS sync needed; monitor resource consumption)
 
 ---
 
-## コスト見積もり（1ブリーフィングあたり）
+## Cost Estimate (per briefing)
 
-| STEP | コスト |
-|------|--------|
-| STEP 2 Gemini Search × 10カ国 | ~$0.001 |
-| STEP 3 構造化要約 | ~$0.001 |
-| STEP 4 原稿生成 | ~$0.001 |
-| STEP 5 画像生成 × 5〜8枚 | ~$0.20〜$0.31 |
-| STEP 6 TTS × 15パラグラフ前後 | 無料枠内の見込み |
-| STEP 7 ffmpeg | 無料（ローカル処理） |
-| STEP 8 ContentIndex登録 | 無料（ローカル処理） |
-| **合計** | **~$0.21〜$0.32** |
+| STEP | Cost |
+|------|------|
+| STEP 2 Gemini Search × ~10 countries | ~$0.001 |
+| STEP 3 Structured summary | ~$0.001 |
+| STEP 4 Script generation | ~$0.001 |
+| STEP 5 Image generation × 5–8 images | ~$0.20–$0.31 |
+| STEP 6 TTS × ~15 paragraphs | Expected within free tier |
+| STEP 7 ffmpeg | Free (local processing) |
+| STEP 8 ContentIndex registration | Free (local processing) |
+| **Total** | **~$0.21–$0.32** |
 
-1日5本生成しても **~$1.05〜$1.60 / 日**
+Generating 5 briefings per day costs approximately **~$1.05–$1.60 / day**.

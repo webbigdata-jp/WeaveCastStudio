@@ -1,12 +1,13 @@
 """
-STEP 6: ナレーション音声生成
-日本語原稿テキストをGemini TTSで音声化する。
+Phase 3: Narration audio generation.
+Converts a script text to speech using Gemini TTS.
 
-使用モデル: gemini-2.5-flash-preview-tts
-出力フォーマット: PCM 16-bit, 24000 Hz, mono → WAVファイルとして保存
+Model: gemini-2.5-flash-preview-tts
+Output format: PCM 16-bit, 24000 Hz, mono -> saved as WAV files.
 
-※ Gemini TTSは日本語（ja）を自動検出で対応。
-  日本語テキストを渡せば自動で日本語音声が生成される。
+The output language is controlled by LANGUAGE in .env (BCP-47 code).
+Gemini TTS auto-detects language from the text, so prompting in the
+target language is sufficient.
 """
 
 import re
@@ -17,6 +18,8 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
+from .language_utils import get_language_config
+
 logger = logging.getLogger(__name__)
 
 TTS_MODEL = "gemini-2.5-flash-preview-tts"
@@ -24,16 +27,16 @@ SAMPLE_RATE = 24000
 SAMPLE_WIDTH = 2   # 16-bit = 2 bytes
 CHANNELS = 1       # mono
 
-# 1回のTTSリクエストの最大文字数（安全マージンを持たせた値）
+# Maximum characters per TTS request (conservative safe margin)
 MAX_CHARS_PER_REQUEST = 4000
 
-# リトライ設定
+# Retry settings
 MAX_RETRIES = 4
-RETRY_BASE_WAIT = 5   # 秒（指数バックオフの基底）
+RETRY_BASE_WAIT = 5   # seconds (exponential backoff base)
 
 
 def _save_wave(path: Path, pcm_data: bytes) -> None:
-    """PCMバイトデータをWAVファイルとして保存する"""
+    """Save raw PCM bytes as a WAV file."""
     with wave.open(str(path), "wb") as wf:
         wf.setnchannels(CHANNELS)
         wf.setsampwidth(SAMPLE_WIDTH)
@@ -42,7 +45,7 @@ def _save_wave(path: Path, pcm_data: bytes) -> None:
 
 
 def _save_silence(path: Path, duration_seconds: float = 3.0) -> None:
-    """指定秒数の無音WAVファイルを生成する（TTS失敗時のプレースホルダー）"""
+    """Generate a silent WAV file of the given duration (placeholder on TTS failure)."""
     num_frames = int(SAMPLE_RATE * duration_seconds)
     pcm_silence = b'\x00' * num_frames * SAMPLE_WIDTH * CHANNELS
     _save_wave(path, pcm_silence)
@@ -50,9 +53,9 @@ def _save_silence(path: Path, duration_seconds: float = 3.0) -> None:
 
 def _split_into_paragraphs(text: str, max_chars: int = MAX_CHARS_PER_REQUEST) -> list[str]:
     """
-    テキストをパラグラフ単位で分割する。
-    1パラグラフがmax_charsを超える場合はさらに文単位で分割する。
-    日本語の句点「。」にも対応。
+    Split text into paragraph-sized chunks.
+    Paragraphs exceeding max_chars are further split at sentence boundaries.
+    Handles both CJK full-stop '。' and Latin period '.'.
     """
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     result = []
@@ -61,7 +64,7 @@ def _split_into_paragraphs(text: str, max_chars: int = MAX_CHARS_PER_REQUEST) ->
         if len(para) <= max_chars:
             result.append(para)
         else:
-            # 日本語の句点と英語のピリオドの両方で文を分割
+            # Split on CJK and Latin sentence endings
             sentences = re.split(r'(?<=[。.!?])\s*', para)
             chunk = ""
             for sentence in sentences:
@@ -84,27 +87,34 @@ def generate_narration(
     voice_name: str = "Charon",
 ) -> list[Path]:
     """
-    日本語原稿テキストをTTSで音声化し、パラグラフごとにWAVファイルを保存する。
+    Convert a narration script to speech and save one WAV file per paragraph.
 
     Args:
-        client: 初期化済みの genai.Client
-        script_text: [IMAGE: ...] マーカーを含む日本語原稿テキスト
-        output_dir: 音声ファイルの保存先ディレクトリ
-        voice_name: 使用するボイス名（デフォルト: "Charon" — 落ち着いた報道向き）
+        client: Initialised genai.Client.
+        script_text: Narration text (may contain [IMAGE: ...] markers).
+        output_dir: Directory to write WAV files into.
+        voice_name: TTS voice name (default: "Charon" — calm, broadcast-suitable).
 
     Returns:
-        生成したWAVファイルパスのリスト
+        List of paths to the generated WAV files.
     """
-    # [IMAGE: ...] マーカーを除去した純粋なテキストを取得
+    lang = get_language_config()
+
+    # Strip [IMAGE: ...] markers before sending to TTS
     clean_script = re.sub(r'\[IMAGE:\s*.*?\]', '', script_text).strip()
 
     paragraphs = _split_into_paragraphs(clean_script)
-    logger.info(f"TTS: {len(paragraphs)}個のパラグラフを音声化します（ボイス: {voice_name}）")
+    logger.info(
+        f"TTS: converting {len(paragraphs)} paragraph(s) to audio "
+        f"(voice: {voice_name}, language: {lang.prompt_lang})"
+    )
 
     audio_paths = []
     for i, paragraph in enumerate(paragraphs):
         output_path = output_dir / f"segment_{i:03d}.wav"
-        logger.info(f"  パラグラフ {i+1}/{len(paragraphs)} を音声化中（{len(paragraph)}文字）...")
+        logger.info(
+            f"  Paragraph {i+1}/{len(paragraphs)}: {len(paragraph)} chars ..."
+        )
 
         success = False
         for attempt in range(1, MAX_RETRIES + 1):
@@ -112,8 +122,9 @@ def generate_narration(
                 response = client.models.generate_content(
                     model=TTS_MODEL,
                     contents=(
-                        f"以下の日本語テキストを、落ち着いた権威あるプロのニュースキャスターの声で"
-                        f"読み上げてください。明瞭で聞き取りやすく、適度なペースで話してください:\n\n"
+                        f"Read the following text aloud in {lang.prompt_lang} "
+                        f"as a calm, authoritative professional news anchor. "
+                        f"Speak clearly, at a measured pace:\n\n"
                         f"{paragraph}"
                     ),
                     config=types.GenerateContentConfig(
@@ -131,29 +142,33 @@ def generate_narration(
                 audio_data = response.candidates[0].content.parts[0].inline_data.data
                 _save_wave(output_path, audio_data)
                 audio_paths.append(output_path)
-                logger.info(f"  -> 保存完了: {output_path}")
+                logger.info(f"  -> saved: {output_path}")
                 success = True
-                break  # 成功したのでリトライループを抜ける
+                break
 
             except Exception as e:
                 wait = RETRY_BASE_WAIT * (2 ** (attempt - 1))  # 5s, 10s, 20s, 40s
                 if attempt < MAX_RETRIES:
                     logger.warning(
-                        f"  -> TTS試行 {attempt}/{MAX_RETRIES} 失敗: {e}. "
-                        f"{wait}秒後にリトライします..."
+                        f"  -> TTS attempt {attempt}/{MAX_RETRIES} failed: {e}. "
+                        f"Retrying in {wait}s ..."
                     )
                     time.sleep(wait)
                 else:
                     logger.error(
-                        f"  -> TTS {MAX_RETRIES}回試行すべて失敗（パラグラフ{i}）。"
-                        f"セグメントをスキップします。"
+                        f"  -> All {MAX_RETRIES} TTS attempts failed for paragraph {i}. "
+                        f"Skipping segment."
                     )
 
         if not success:
-            # 全リトライ失敗 → 無音WAVをプレースホルダーとして挿入して音声の欠落を防ぐ
+            # All retries exhausted — insert silent placeholder to keep audio intact
             _save_silence(output_path, duration_seconds=3)
             audio_paths.append(output_path)
-            logger.warning(f"  -> パラグラフ{i}に3秒の無音プレースホルダーを挿入しました。")
+            logger.warning(
+                f"  -> Inserted 3s silent placeholder for paragraph {i}."
+            )
 
-    logger.info(f"TTS完了: {len(audio_paths)}/{len(paragraphs)}セグメント生成済み")
+    logger.info(
+        f"TTS complete: {len(audio_paths)}/{len(paragraphs)} segment(s) generated."
+    )
     return audio_paths

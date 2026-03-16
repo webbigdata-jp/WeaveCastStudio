@@ -1,8 +1,8 @@
 """
-STEP 7: 動画合成
-画像スライドショー + ナレーション音声 → MP4動画 (1920x1080, H.264, AAC)
+Phase 7: Video composition.
+Combines image slideshow + narration audio -> MP4 (1920x1080, H.264, AAC).
 
-依存: ffmpeg (システムインストール必須), pydub
+Dependencies: ffmpeg (system install required), pydub.
 """
 
 import subprocess
@@ -13,13 +13,13 @@ from pydub import AudioSegment
 
 logger = logging.getLogger(__name__)
 
-# 音声セグメント間の無音挿入時間（ミリ秒）
+# Silent gap inserted between audio segments (milliseconds)
 GAP_BETWEEN_SEGMENTS_MS = 500
 
-# 動画エンコード設定
+# Video encoding settings
 VIDEO_WIDTH = 1920
 VIDEO_HEIGHT = 1080
-VIDEO_CRF = 23         # 品質（低いほど高品質・大容量）
+VIDEO_CRF = 23          # Quality (lower = higher quality / larger file)
 VIDEO_PRESET = "medium"
 AUDIO_BITRATE = "192k"
 
@@ -30,13 +30,13 @@ def merge_audio_segments(
     gap_ms: int = GAP_BETWEEN_SEGMENTS_MS,
 ) -> float:
     """
-    複数のWAVファイルを結合してひとつのWAVファイルにする。
-    セグメント間には gap_ms ミリ秒の無音を挿入する。
+    Concatenate multiple WAV files into a single WAV.
+    A silent gap of gap_ms milliseconds is inserted between segments.
 
     Returns:
-        結合後の音声の総秒数
+        Total duration of the combined audio in seconds.
     """
-    logger.info(f"{len(audio_paths)}個の音声セグメントを結合中...")
+    logger.info(f"Merging {len(audio_paths)} audio segment(s) ...")
     silence = AudioSegment.silent(duration=gap_ms)
     combined = AudioSegment.empty()
 
@@ -46,7 +46,7 @@ def merge_audio_segments(
 
     combined.export(str(output_path), format="wav")
     total_seconds = len(combined) / 1000.0
-    logger.info(f"音声結合完了: {total_seconds:.1f}秒 -> {output_path}")
+    logger.info(f"Audio merge complete: {total_seconds:.1f}s -> {output_path}")
     return total_seconds
 
 
@@ -56,25 +56,24 @@ def create_video(
     output_path: Path,
 ) -> None:
     """
-    画像スライドショー + 音声 → MP4動画を ffmpeg で生成する。
+    Generate an MP4 video from an image slideshow + audio using ffmpeg.
 
-    画像1枚の場合: -loop 1 方式（タイムスタンプ問題を回避）
-    画像複数枚の場合: concat demuxer 方式（均等割り当て）
+    Single image:   -loop 1 method (avoids timestamp issues with long stills).
+    Multiple images: concat demuxer method (equal duration per image).
 
     Args:
-        image_paths: スライド画像のパスリスト（表示順）
-        audio_path: 結合済みナレーション音声WAVのパス
-        output_path: 出力MP4ファイルのパス
+        image_paths: Ordered list of slide image paths.
+        audio_path:  Combined narration WAV path.
+        output_path: Output MP4 path.
     """
     if not image_paths:
-        raise ValueError("動画合成に使用する画像がありません。")
+        raise ValueError("No images provided for video composition.")
 
-    # 音声の長さを取得
     audio = AudioSegment.from_wav(str(audio_path))
     total_duration = len(audio) / 1000.0
 
     logger.info(
-        f"動画を合成中: スライド{len(image_paths)}枚、合計{total_duration:.1f}秒"
+        f"Composing video: {len(image_paths)} slide(s), {total_duration:.1f}s total."
     )
 
     vf_filter = (
@@ -84,8 +83,7 @@ def create_video(
     )
 
     if len(image_paths) == 1:
-        # 静止画1枚の場合: -loop 1 方式
-        # concat demuxer は長時間静止画でタイムスタンプ変換エラーが出るため使用しない
+        # Single still: use -loop 1 to avoid concat demuxer timestamp conversion errors
         cmd = [
             "ffmpeg", "-y",
             "-loop", "1",
@@ -101,16 +99,16 @@ def create_video(
             "-movflags", "+faststart",
             str(output_path),
         ]
-        logger.info(f"ffmpeg実行（静止画1枚 / -loop 1）: {' '.join(cmd)}")
+        logger.info(f"ffmpeg (single image / -loop 1): {' '.join(cmd)}")
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True)
-            logger.info(f"動画生成完了: {output_path}")
+            logger.info(f"Video created: {output_path}")
         except subprocess.CalledProcessError as e:
-            logger.error(f"ffmpeg失敗:\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}")
+            logger.error(f"ffmpeg failed:\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}")
             raise
 
     else:
-        # 複数枚の場合: concat demuxer 方式
+        # Multiple images: concat demuxer with equal time per image
         duration_per_image = total_duration / len(image_paths)
         concat_path = None
         try:
@@ -121,7 +119,7 @@ def create_video(
                 for img_path in image_paths:
                     concat_file.write(f"file '{img_path.resolve()}'\n")
                     concat_file.write(f"duration {duration_per_image:.4f}\n")
-                # ffmpegのconcat demuxerは最後のファイルを2回書く必要がある
+                # ffmpeg concat demuxer requires the last file to be listed twice
                 concat_file.write(f"file '{image_paths[-1].resolve()}'\n")
 
             cmd = [
@@ -139,12 +137,12 @@ def create_video(
                 "-movflags", "+faststart",
                 str(output_path),
             ]
-            logger.info(f"ffmpeg実行（concat方式）: {' '.join(cmd)}")
+            logger.info(f"ffmpeg (concat demuxer): {' '.join(cmd)}")
             try:
                 subprocess.run(cmd, check=True, capture_output=True, text=True)
-                logger.info(f"動画生成完了: {output_path}")
+                logger.info(f"Video created: {output_path}")
             except subprocess.CalledProcessError as e:
-                logger.error(f"ffmpeg失敗:\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}")
+                logger.error(f"ffmpeg failed:\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}")
                 raise
         finally:
             if concat_path:
@@ -160,31 +158,24 @@ def compose_video(
     merged_audio_path: Path | None = None,
 ) -> Path:
     """
-    STEP 7のメインエントリポイント。
-    音声結合 → 動画合成 を実行して完成MP4のパスを返す。
+    Phase 7 main entry point.
+    Merges audio then composes the final MP4; returns the output path.
 
     Args:
-        output_video_path: 動画の出力先パスを直接指定する場合。
-                           None の場合は output_dir/video/briefing.mp4
-        merged_audio_path: 結合音声の保存先パスを直接指定する場合。
-                           None の場合は output_dir/audio/full_narration.wav
+        output_video_path: Override output path. Defaults to output_dir/video/briefing.mp4.
+        merged_audio_path: Override merged audio path. Defaults to output_dir/audio/full_narration.wav.
     """
     if merged_audio_path is None:
         merged_audio_path = output_dir / "audio" / "full_narration.wav"
     if output_video_path is None:
         output_video_path = output_dir / "video" / "briefing.mp4"
 
-    # 出力ディレクトリ作成
     merged_audio_path.parent.mkdir(parents=True, exist_ok=True)
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 音声結合
     merge_audio_segments(audio_segments, merged_audio_path)
 
-    # タイトルスライドを先頭に追加
     all_images = [title_slide] + content_slides
-
-    # 動画合成
     create_video(all_images, merged_audio_path, output_video_path)
 
     return output_video_path

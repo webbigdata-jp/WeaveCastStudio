@@ -30,8 +30,8 @@ GCE (M1/M3)  ──→  GCS Bucket  ──→  Windows PC (M4)
   cron jobs        gcloud rsync       pull_from_gcs.ps1
 ```
 
-M1 and M3 run on cron, push results (videos, images, JSON, SQLite DB) to a GCS bucket.  
-The Windows broadcast station pulls them with `pull_from_gcs.ps1` before going live.  
+M1 and M3 run on cron, push results (videos, images, JSON, SQLite DB) to a GCS bucket.
+The Windows broadcast station pulls them with `pull_from_gcs.ps1` before going live.
 M4 reads the local data and serves it during the broadcast.
 
 ## Prerequisites
@@ -49,13 +49,15 @@ M4 reads the local data and serves it during the broadcast.
 ```
 WeaveCastStudio/
 ├── README.md                  # ← This file
-├── .env                       # GOOGLE_API_KEY (git-ignored, shared by all modules)
+├── .env                       # GOOGLE_API_KEY + LANGUAGE (git-ignored, shared by all modules)
+├── .env.sample                # Template for .env
 ├── content_index.py           # Shared module: content registry for M1/M3 → M4
 ├── pull_from_gcs.ps1          # Windows: pull GCS data to local
 ├── pyproject.toml             # uv project definition
 │
-├── shared/                    # M1/M3 共通パイプラインモジュール
+├── shared/                    # Common pipeline modules for M1/M3
 │   ├── __init__.py
+│   ├── language_utils.py      # BCP-47 language config loader (reads LANGUAGE from .env)
 │   ├── source_collector.py    # Phase 1: Gemini Search + nodriver
 │   ├── summarizer.py          # Phase 1: Structured JSON summary
 │   ├── script_writer.py       # Phase 2: Narration script
@@ -153,10 +155,9 @@ gcloud compute ssh weavecast-collector --zone=asia-northeast1-b
 cd ~/WeaveCastStudio
 uv sync
 
-# Set API key (project root — shared by all modules)
-cat > .env << 'EOF'
-GOOGLE_API_KEY=your_api_key_here
-EOF
+# Configure environment (project root — shared by all modules)
+cp .env.sample .env
+# Edit .env: set GOOGLE_API_KEY and LANGUAGE
 
 # Verify M3
 cd compe_M3 && uv run main.py crawl
@@ -175,6 +176,10 @@ crontab -e
 git clone https://github.com/webbigdata-jp/WeaveCastStudio.git
 cd WeaveCastStudio
 uv sync
+
+# Configure environment
+cp .env.sample .env
+# Edit .env: set GOOGLE_API_KEY and LANGUAGE
 
 # Pull data from GCS
 .\pull_from_gcs.ps1
@@ -209,6 +214,53 @@ python gemini_live_client.py
 .\pull_from_gcs.ps1 -m1only
 ```
 
+## Environment Variables
+
+| Variable | Where | Description |
+|----------|-------|-------------|
+| `GOOGLE_API_KEY` | `.env` (project root) | Gemini API key |
+| `LANGUAGE` | `.env` (project root) | Output language as a BCP-47 code (e.g. `ja`, `en`, `ko`) |
+
+All modules (M1, M3, M4) load `.env` from the project root (`WeaveCastStudio/.env`).
+
+### LANGUAGE configuration
+
+`LANGUAGE` is a [BCP-47 language code](https://ai.google.dev/gemini-api/docs/live-api/capabilities#supported-languages) that controls the output language across all modules:
+
+- **Live API (M4):** passed directly as the session language code (e.g. `ja`).
+- **Standard prompts (M1/M3):** automatically converted to a natural-language name (e.g. `Japanese`) by `shared/language_utils.py` and injected into Gemini prompts, so narration scripts, image captions, and summaries are generated in the chosen language.
+
+The conversion table lives in `shared/language_utils.py`. To add a language, append its BCP-47 code and English name to `_BCP47_TO_PROMPT_LANG`. Unsupported codes fall back to `en` / `English`.
+
+```bash
+# Example .env
+GOOGLE_API_KEY=your_api_key_here
+LANGUAGE=ja   # Japanese output
+```
+
+YouTube upload (M1 Phase 5) additionally requires OAuth2 credentials — see `compe_M1/README.md`.
+
+## Topic Configuration (`topics.yaml`)
+
+Each topic entry uses two title fields:
+
+| Field | Purpose |
+|-------|---------|
+| `title_en` | English topic name used for Gemini search queries and as the internal dictionary key. |
+| `title_target_lang` | Display name in the output language (set via `LANGUAGE`). Used for on-screen titles, narration scripts, and image captions. |
+
+```yaml
+# Example
+- title_en: "Strait of Hormuz blockade"
+  title_target_lang: "ホルムズ海峡封鎖"   # shown in output when LANGUAGE=ja
+  query_keywords:
+    - "Strait of Hormuz blockade 2026"
+  importance_score: 9.0
+  tags: ["hormuz", "iran", "shipping", "military"]
+```
+
+When adding a topic, always set `title_target_lang` to the display text appropriate for your configured `LANGUAGE`.
+
 ## Usage
 
 ### M1: Generate a Briefing Video
@@ -222,15 +274,15 @@ uv run main.py --phase 1          # Collect + summarize
 uv run main.py --phase 2          # Script + images
 uv run main.py --phase 3          # TTS narration
 uv run main.py --phase 4          # Compose video
-uv run main.py --phase 5          # Upload to YouTube
+uv run main.py --phase 5          # Register to ContentIndex
 
 # Or run all at once
-uv run main.py                    # Phases 1-5
-uv run main.py --skip-upload      # Phases 1-4 (no YouTube)
+uv run main.py                    # Phases 1–5
+uv run main.py --skip-upload      # Phases 1–4, then ContentIndex only (no YouTube)
 
 # Switch topics
-uv run main.py --phase 1 --topic-index 0   # Iran Conflict (default)
-uv run main.py --phase 1 --topic-index 1   # Ukraine Peace
+uv run main.py --phase 1 --topic-index 0   # First topic (default)
+uv run main.py --phase 1 --topic-index 1   # Second topic
 ```
 
 See `compe_M1/README.md` for the full pipeline diagram and cost estimates.
@@ -287,22 +339,6 @@ python gemini_live_client.py
 | F8 | Restore media window |
 | **F9** | **Push-to-talk** (hold to speak to Gemini) |
 
-## Environment Variables
-
-| Variable | Where | Description |
-|----------|-------|-------------|
-| `GOOGLE_API_KEY` | `.env` (project root) | Gemini API key |
-
-All modules (M1, M3, M4) load `.env` from the project root (`WeaveCastStudio/.env`).  
-YouTube upload (M1 Phase 5) additionally requires OAuth2 credentials — see `compe_M1/README.md`.
-
-```bash
-# Setup
-cat > .env << 'EOF'
-GOOGLE_API_KEY=your_api_key_here
-EOF
-```
-
 ## Tech Stack
 
 Python, google-genai SDK, Gemini Live API, Gemini 2.5 Flash, Google Grounding, DrissionPage, nodriver, ffmpeg, APScheduler, PyAudio, python-vlc, tkinter, OBS Studio, Terraform, GCE, GCS, YouTube Data API v3
@@ -312,13 +348,10 @@ Python, google-genai SDK, Gemini Live API, Gemini 2.5 Flash, Google Grounding, D
 - [x] ~~**M3 refactoring**: Consolidate `test_phase*.py` into a proper `main.py` with CLI subcommands.~~
 - [x] ~~**Unified config**: `.env` consolidated to project root, no longer duplicated.~~
 - [x] ~~**Shared modules**: `compe_M1/agents/` moved to top-level `shared/`, eliminating cross-platform symlink issues.~~
-- [ ] **M3 documentation**: Add a dedicated `compe_M3/README.md` with architecture, data flow, and sources.yaml schema docs.
-- [ ] **Delete dead files**: Remove the development artifacts listed above (`p.py`, `check_prompts.py`, `test_grounding.py`, `compe_M4/test_*.py`).
+- [x] ~~**Multilingual output**: All source code comments, docstrings, and log messages converted to English. `LANGUAGE` (BCP-47) added to `.env`; `shared/language_utils.py` handles Live API ↔ prompt conversion automatically.~~
 - [ ] **GCE→GCS sync script**: The `gcp/` directory references sync but no dedicated push script is committed. Document or add the cron-based `gcloud storage rsync` commands.
-- [ ] **Root `main.py`**: Currently a placeholder (`print("Hello")`). Either remove or repurpose as a top-level orchestrator.
 - [ ] **CI/CD**: No automated tests or linting configured yet.
 - [ ] **content_index.py docs**: Document the shared content registry schema used between M1/M3 (producers) and M4 (consumer).
-- [ ] **M1 cleanup**: Remove `compe_M1/agents/` directory after confirming all imports use `shared/`.
 
 ## License
 

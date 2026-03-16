@@ -19,4 +19,11 @@ youtube_token.json
 output
 data
 assets
-work
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info

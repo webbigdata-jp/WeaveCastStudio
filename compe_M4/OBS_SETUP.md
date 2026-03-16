@@ -1,110 +1,108 @@
-# OBS ブラウザソース設定手順 — Breaking News ティッカー
+# OBS Browser Source Setup — Breaking News Ticker
 
-## 前提条件
+## Prerequisites
 
-- OBS Studio がインストール済み
-- StoryWire M4 サーバが起動済み（`http://localhost:8765/overlay` にアクセスできる状態）
+- OBS Studio installed
+- WeaveCastStudio M4 server running (`http://localhost:8765/overlay` is accessible)
 
 ---
 
-## 手順
+## Steps
 
-### 1. ティッカーサーバの起動確認
+### 1. Verify Ticker Server
 
-テスト用スクリプトで動作確認する場合:
+When running with gemini_live_client.py, the server starts automatically on launch.
+
+To test standalone:
 
 ```bash
 cd compe_M4
-python test_breaking_news.py
+python breaking_news_server.py [db_path]
 ```
 
-ブラウザで `http://localhost:8765/overlay` を開き、ティッカーが表示されることを確認する。
+Open `http://localhost:8765/overlay` in a browser and verify the ticker is displayed.
 
-本番（gemini_live_client.py と連動）の場合は、
-gemini_live_client.py の起動時に自動でサーバが立ち上がる。
+### 2. Add a Browser Source in OBS
 
-### 2. OBS でブラウザソースを追加
+1. Open OBS
+2. Select the scene you want to use
+3. Click the "+" button in the "Sources" panel
+4. Select **"Browser"**
+5. Name it "Breaking News Ticker" (or similar) and click "OK"
 
-1. OBS を起動する
-2. 使用するシーンを選択する
-3. 「ソース」パネルの「＋」ボタンをクリック
-4. **「ブラウザ」** を選択
-5. 名前を「Breaking News Ticker」などにして「OK」
+### 3. Configure Browser Source Properties
 
-### 3. ブラウザソースのプロパティ設定
-
-| 項目 | 値 |
-|---|---|
+| Property | Value |
+|----------|-------|
 | **URL** | `http://localhost:8765/overlay` |
-| **幅** | `1920` |
-| **高さ** | `1080` |
-| **カスタムCSS** | （空欄にする。デフォルトの body 背景色設定を削除） |
-| **ページ権限** | 基本的なアクセス許可 |
+| **Width** | `1920` |
+| **Height** | `1080` |
+| **Custom CSS** | (Clear this field — remove all default CSS) |
+| **Page permissions** | Basic access |
 
-**重要**: 「カスタムCSS」フィールドにデフォルトで入っている CSS を
-**すべて削除** して空にすること。デフォルト CSS に含まれる
-`body { background-color: rgba(0,0,0,0); }` は残してもよいが、
-それ以外の `overflow: hidden` 等の指定が干渉する場合がある。
+**Important**: **Delete all CSS** in the "Custom CSS" field.
+The default CSS includes `body { background-color: rgba(0,0,0,0); }` which is fine to keep,
+but other rules like `overflow: hidden` may interfere with the ticker.
 
-### 4. レイヤー順序の設定
+### 4. Set Layer Order
 
-「ソース」パネルで、以下の順序（上が前面）になるように配置する:
+Arrange sources in the "Sources" panel in the following order (top = foreground):
 
 ```
-Breaking News Ticker  ← 最前面（ティッカー）
-StoryWire Media       ← MediaWindow のウィンドウキャプチャ
-（その他のソース）
+Breaking News Ticker  ← Topmost (ticker overlay)
+WeaveCast Media       ← Window Capture of MediaWindow
+(Other sources)
 ```
 
-ドラッグ＆ドロップでソースの順序を入れ替えられる。
+Drag and drop to reorder sources.
 
-### 5. 位置・サイズの調整
+### 5. Adjust Position and Size
 
-ブラウザソースは 1920×1080 の透過画像として扱われる。
-MediaWindow のウィンドウキャプチャと同じ位置・サイズに重ねる。
+The browser source is treated as a 1920×1080 transparent overlay.
+Align it with the MediaWindow window capture at the same position and size.
 
-- ブラウザソースを右クリック → 「変換」 → 「画面に合わせる」
-  または手動で位置(0, 0)、サイズ(1920, 1080) に設定。
+- Right-click the browser source → "Transform" → "Fit to screen"
+  or manually set position (0, 0) and size (1920, 1080).
 
-### 6. 動作確認
+### 6. Verify
 
-1. テストスクリプト (`test_breaking_news.py`) を実行
-2. OBS のプレビュー画面で以下を確認:
-   - 画面下部にニュースティッカーが表示される
-   - 15秒後に赤帯＋「BREAKING NEWS」演出が発動する
-   - 45秒後に通常モードに戻る
-3. 問題なければ本番シーンに組み込む
+1. Run `demo_setup.py --seed-db --run --breaking-delay 15`
+2. Check the OBS preview:
+   - News ticker appears at the bottom of the screen
+   - After 15 seconds, the red "BREAKING NEWS" banner appears
+   - After ~45 seconds, the ticker returns to normal mode
+3. If everything works, integrate into your production scene
 
 ---
 
-## トラブルシューティング
+## Troubleshooting
 
-### ティッカーが表示されない
+### Ticker not showing
 
-- ブラウザで `http://localhost:8765/overlay` に直接アクセスして表示されるか確認
-- サーバが起動しているか確認（`http://localhost:8765/status` でJSON が返るか）
-- OBS のブラウザソースのプロパティで「ページをリフレッシュ」を実行
+- Open `http://localhost:8765/overlay` directly in a browser to check
+- Verify the server is running (`http://localhost:8765/status` should return JSON)
+- In OBS browser source properties, click "Refresh cache of current page"
 
-### 背景が透過しない（黒い背景が見える）
+### Background not transparent (black background visible)
 
-- ブラウザソースのプロパティで「カスタムCSS」を空にする
-- OBS のブラウザソースの「色キー」フィルターは使わないこと
-  （HTML側で `background: transparent` を設定済み）
+- Clear the "Custom CSS" field in browser source properties
+- Do not use OBS "Color Key" filter on the browser source
+  (the HTML already sets `background: transparent`)
 
-### ティッカーの位置がずれる
+### Ticker position is offset
 
-- ブラウザソースのサイズが 1920×1080 になっていることを確認
-- OBS のキャンバスサイズ（設定→映像→基本解像度）が 1920×1080 であることを確認
+- Verify the browser source size is set to 1920×1080
+- Verify the OBS canvas size (Settings → Video → Base Resolution) is 1920×1080
 
-### 速報演出が出ない
+### Breaking news animation not appearing
 
-- `http://localhost:8765/status` で `has_breaking: true` になっているか確認
-- SSE 接続が確立されているか、ブラウザの DevTools（F12）→ Network タブで確認
+- Check `http://localhost:8765/status` — verify `has_breaking: true`
+- Check SSE connection in browser DevTools (F12) → Network tab
 
 ---
 
-## ポート番号の変更
+## Changing the Port
 
-デフォルトのポート番号 `8765` を変更する場合は、
-`breaking_news_server.py` の `DEFAULT_PORT` を変更し、
-OBS のブラウザソース URL も合わせて変更する。
+To change the default port `8765`,
+update `DEFAULT_PORT` in `breaking_news_server.py`
+and update the OBS browser source URL accordingly.

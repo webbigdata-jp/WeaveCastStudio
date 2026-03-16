@@ -2,7 +2,8 @@
 
 **AI-Powered Multilingual Live Broadcast Assistant**
 
-WeaveCastStudio is an end-to-end system that automates news collection, fact-checking, video generation, and real-time live broadcast support for journalists. A Gemini-powered AI co-pilot listens to the journalist's voice commands during a live stream and controls on-screen media — playing video clips, showing maps, and surfacing breaking news — so the journalist can focus on reporting.
+WeaveCastStudio is an end-to-end system that automates news gathering, fact-checking, video generation, and real-time live streaming support for journalists.  
+During live streaming, Gemini listens to the journalist's voice instructions and handles behind-the-scenes tasks such as playing video clips, displaying maps, and presenting/explaining breaking news, allowing journalists to focus on their live broadcast.  
 
 ![System Architecture](docs/weavecaststudio_architecture_simple.png)
 
@@ -108,27 +109,11 @@ WeaveCastStudio/
 │   ├── breaking_news_server.py# HTTP+SSE server for OBS ticker
 │   ├── overlay/
 │   │   └── ticker.html        # OBS browser source (breaking news)
-│   ├── OBS_SETUP.md           # OBS configuration guide
-│   ├── DEMO_SCRIPT.md         # Demo recording script
-│   └── demo_setup.py          # Demo data seeding & breaking trigger
+│   └── OBS_SETUP.md           # OBS configuration guide
 │
 └── docs/
     └── weavecaststudio_architecture_simple.png
 ```
-
-> **Files to delete** (development artifacts, not needed in the repo):
-> - `compe_M3/p.py` — one-off DrissionPage test
-> - `compe_M3/test_phase1.py` — replaced by `main.py crawl`
-> - `compe_M3/test_phase2.py` — replaced by `main.py analyze`
-> - `compe_M3/test_phase3.py` — replaced by `main.py compose`
-> - `compe_M3/test_phase4.py` — replaced by `main.py schedule` / `main.py pipeline`
-> - `compe_M3/shared/` — symlink to compe_M1/agents/ (replaced by top-level shared/)
-> - `compe_M1/check_prompts.py` — prompt debugging script
-> - `compe_M1/test_grounding.py` — Grounding API test
-> - `compe_M4/test_media_playback.py` — VLC playback test
-> - `compe_M4/test_gemini.py` — Gemini API test
-> - `compe_M4/test_vlc.py` — VLC binding test
-> - `compe_M4/test_breaking_news.py` — ticker server test
 
 ## Setup
 
@@ -366,12 +351,6 @@ Python, google-genai SDK, Gemini Live API, Gemini 2.5 Flash, Google Grounding, D
 
 ## TODO
 
-- [x] ~~**M3 refactoring**: Consolidate `test_phase*.py` into a proper `main.py` with CLI subcommands.~~
-- [x] ~~**Unified config**: `.env` consolidated to project root, no longer duplicated.~~
-- [x] ~~**Shared modules**: `compe_M1/agents/` moved to top-level `shared/`, eliminating cross-platform symlink issues.~~
-- [x] ~~**Multilingual output**: All source code comments, docstrings, and log messages converted to English. `LANGUAGE` (BCP-47) added to `.env`; `shared/language_utils.py` handles Live API ↔ prompt conversion automatically.~~
-- [x] ~~**M3 code English**: All M3 docstrings, inline comments, prompts, and CLI help strings converted to English. `GeminiClient` now resolves `LANGUAGE` on init (`self.language`) and passes it to analyst and composer prompts. Text output fields (`summary`, `importance_reason`, scripts) are generated in the configured language; structured fields (`topics`, `key_entities`) remain in English.~~
-- [x] ~~**M3 general-purpose prompts**: `gemini_analyst.py` and `briefing_composer.py` prompts rewritten for general news content creators (YouTubers, independent journalists). Removed OSINT/military-specific framing. Each prompt file contains a `NOTE FOR MAINTAINERS` comment with guidance for customising to a specialist vertical.~~
 - [ ] **M3 prompt tuning**: Default prompts in `gemini_analyst.py` (`_ANALYSIS_PROMPT_TEMPLATE`) and `briefing_composer.py` (`generate_m3_script`, `_generate_short_clip_script`) are intentionally general-purpose. If deploying for a specific content vertical (finance, sports, local politics, etc.), edit the scoring guide, topic examples, and tone instructions in those files.
 - [ ] **GCE→GCS sync script**: The `gcp/` directory references sync but no dedicated push script is committed. Document or add the cron-based `gcloud storage rsync` commands.
 - [ ] **CI/CD**: No automated tests or linting configured yet.

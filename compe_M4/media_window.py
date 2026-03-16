@@ -1,17 +1,17 @@
 """
 compe_M4/media_window.py
 
-OBS キャプチャ対応メディアウィンドウ。
-tkinter ウィンドウに VLC 動画と Pillow 静止画を表示する。
-別スレッドで tkinter メインループを動かし、asyncio と共存する。
+OBS-compatible media window.
+Displays VLC video and Pillow still images in a tkinter window.
+Runs the tkinter main loop in a separate thread to coexist with asyncio.
 
-【機能】
-  - 動画再生（VLC を tkinter Frame に埋め込み）
-  - 静止画表示（Pillow → tkinter Canvas）
-  - キーボードショートカット（F5〜F8）
-  - OBS「ウィンドウキャプチャ」から認識可能
+Features:
+  - Video playback (VLC embedded in a tkinter Frame)
+  - Still image display (Pillow -> tkinter Canvas)
+  - Keyboard shortcuts (F5-F8)
+  - Recognisable by OBS "Window Capture"
 
-【依存】
+Dependencies:
   uv add python-vlc Pillow keyboard
 """
 
@@ -34,24 +34,24 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _HERE = Path(__file__).resolve().parent
 
-# ウィンドウサイズ
+# Window dimensions
 WINDOW_WIDTH = 1920
 WINDOW_HEIGHT = 1080
 WINDOW_TITLE = "WeaveCast Media"
 
-# 静止画アセット設定ファイル
+# Still-image asset config file
 ASSETS_JSON = _HERE / "media_assets.json"
 IMAGES_DIR = _HERE / "assets"
 
 
 # ══════════════════════════════════════════════════════════════════
-# 静止画アセット管理
+# Still-image asset manager
 # ══════════════════════════════════════════════════════════════════
 
 class ImageAssetManager:
     """
-    media_assets.json から静止画アセットを管理する。
-    初回起動時に source_url からダウンロードする。
+    Manages still-image assets defined in media_assets.json.
+    Downloads assets from source_url on first run if not present locally.
     """
 
     def __init__(self, assets_json: Path = ASSETS_JSON):
@@ -61,40 +61,40 @@ class ImageAssetManager:
 
     def _load(self, assets_json: Path):
         if not assets_json.exists():
-            logger.warning(f"アセット設定が見つかりません: {assets_json}")
+            logger.warning(f"Asset config not found: {assets_json}")
             return
         try:
             with open(assets_json, "r", encoding="utf-8") as f:
                 data = json.load(f)
             self._assets = data.get("image_assets", [])
             self._asset_map = {a["id"]: a for a in self._assets}
-            logger.info(f"静止画アセット: {len(self._assets)} 件ロード")
+            logger.info(f"Image assets loaded: {len(self._assets)} item(s)")
         except Exception as e:
-            logger.error(f"アセット設定の読み込みに失敗: {e}")
+            logger.error(f"Failed to load asset config: {e}")
 
     def ensure_downloaded(self):
-        """全アセットがローカルに存在するか確認し、なければダウンロードする。"""
+        """Check that all assets exist locally; download any that are missing."""
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         for asset in self._assets:
             local = _HERE / asset["local_path"]
             if local.exists():
-                logger.debug(f"既存: {asset['id']} → {local}")
+                logger.debug(f"Already exists: {asset['id']} -> {local}")
                 continue
             url = asset.get("source_url")
             if not url:
-                logger.warning(f"source_url が未設定: {asset['id']}")
+                logger.warning(f"source_url not set: {asset['id']}")
                 continue
             try:
                 local.parent.mkdir(parents=True, exist_ok=True)
-                logger.info(f"ダウンロード中: {asset['id']} ← {url}")
+                logger.info(f"Downloading: {asset['id']} <- {url}")
                 req = urllib.request.Request(url, headers={
                     "User-Agent": "WeaveCast/1.0 (media asset downloader)"
                 })
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     local.write_bytes(resp.read())
-                logger.info(f"ダウンロード完了: {asset['id']} → {local}")
+                logger.info(f"Download complete: {asset['id']} -> {local}")
             except Exception as e:
-                logger.error(f"ダウンロード失敗: {asset['id']}: {e}")
+                logger.error(f"Download failed: {asset['id']}: {e}")
 
     def get(self, asset_id: str) -> Optional[dict]:
         return self._asset_map.get(asset_id)
@@ -111,29 +111,29 @@ class ImageAssetManager:
 
 
 # ══════════════════════════════════════════════════════════════════
-# MediaWindow（tkinter + VLC + Pillow）
+# MediaWindow (tkinter + VLC + Pillow)
 # ══════════════════════════════════════════════════════════════════
 
 class MediaWindow:
     """
-    別スレッドで tkinter ウィンドウを動かすメディア表示ウィンドウ。
+    Media display window running a tkinter window in a separate thread.
 
-    使い方:
+    Usage:
         window = MediaWindow()
-        window.start()          # 別スレッドでウィンドウ起動（最小化状態）
-        window.play_video(path) # 動画再生（ウィンドウ復元）
-        window.show_image(path) # 静止画表示（ウィンドウ復元）
-        window.stop()           # 再生停止
-        window.minimize()       # ウィンドウ最小化
-        window.restore()        # ウィンドウ復元
-        window.close()          # 終了
+        window.start()          # Launch window in a separate thread (starts off-screen)
+        window.play_video(path) # Play video (restores window)
+        window.show_image(path) # Display still image (restores window)
+        window.stop()           # Stop playback
+        window.minimize()       # Move window off-screen
+        window.restore()        # Bring window back on-screen
+        window.close()          # Shut down
     """
 
     def __init__(self):
         self._root: Optional[tk.Tk] = None
         self._video_frame: Optional[tk.Frame] = None
         self._canvas: Optional[tk.Canvas] = None
-        self._tk_image: Optional[ImageTk.PhotoImage] = None  # GC防止用参照保持
+        self._tk_image: Optional[ImageTk.PhotoImage] = None  # Keep reference to prevent GC
 
         self._vlc_instance: Optional[vlc.Instance] = None
         self._media_player: Optional[vlc.MediaPlayer] = None
@@ -143,39 +143,39 @@ class MediaWindow:
         self._mode: str = "idle"  # "idle" | "video" | "image"
 
     # ------------------------------------------------------------------
-    # ライフサイクル
+    # Lifecycle
     # ------------------------------------------------------------------
 
     def start(self):
-        """別スレッドで tkinter ウィンドウを起動する。"""
+        """Launch the tkinter window in a separate thread."""
         self._thread = threading.Thread(target=self._run_tk, daemon=True)
         self._thread.start()
         self._ready.wait(timeout=10)
-        logger.info("MediaWindow 起動完了")
+        logger.info("MediaWindow started")
 
     def _run_tk(self):
-        """tkinter メインループ（別スレッドで実行）。"""
+        """tkinter main loop (runs in a separate thread)."""
         self._root = tk.Tk()
         self._root.title(WINDOW_TITLE)
         self._root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self._root.configure(bg="black")
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # --- 動画用 Frame（VLC 埋め込み先）---
+        # --- Frame for video (VLC embed target) ---
         self._video_frame = tk.Frame(self._root, bg="black",
                                      width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
         self._video_frame.place(x=0, y=0, width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
 
-        # --- 静止画用 Canvas ---
+        # --- Canvas for still images ---
         self._canvas = tk.Canvas(self._root, bg="black",
                                  width=WINDOW_WIDTH, height=WINDOW_HEIGHT,
                                  highlightthickness=0)
-        # canvas は必要時にのみ place する
+        # Canvas is placed only when needed
 
-        # --- VLC 初期化 ---
+        # --- VLC initialisation ---
         self._vlc_instance = vlc.Instance()
         self._media_player = self._vlc_instance.media_player_new()
-        # VLC の映像出力先を tkinter Frame に埋め込む
+        # Embed VLC video output into the tkinter Frame
         if sys.platform == "win32":
             self._media_player.set_hwnd(self._video_frame.winfo_id())
         elif sys.platform.startswith("linux"):
@@ -183,8 +183,8 @@ class MediaWindow:
         elif sys.platform == "darwin":
             self._media_player.set_nsobject(self._video_frame.winfo_id())
 
-        # --- 起動時は画面外に配置（OBSは最小化ウィンドウを認識できないため）---
-        # 一度 update して winfo_id を確定させた後、画面外に移動
+        # --- Start off-screen (OBS cannot capture a minimised window) ---
+        # Call update() first to confirm winfo_id, then move off-screen
         self._root.update()
         self._root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+-{WINDOW_WIDTH + 100}+0")
 
@@ -192,11 +192,11 @@ class MediaWindow:
         self._root.mainloop()
 
     def _on_close(self):
-        """ウィンドウの×ボタンが押された場合 → 画面外に移動（閉じない）。"""
+        """When the window's X button is clicked -> move off-screen (do not close)."""
         self._root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+-{WINDOW_WIDTH + 100}+0")
 
     def close(self):
-        """ウィンドウを完全に閉じる。"""
+        """Fully close the window."""
         if self._media_player:
             self._media_player.stop()
         if self._root:
@@ -206,11 +206,11 @@ class MediaWindow:
                 pass
 
     # ------------------------------------------------------------------
-    # スレッドセーフな tkinter 操作ヘルパー
+    # Thread-safe tkinter helpers
     # ------------------------------------------------------------------
 
     def _invoke(self, func, *args):
-        """tkinter スレッド上で関数を実行する（スレッドセーフ）。"""
+        """Execute a function on the tkinter thread (thread-safe)."""
         if self._root:
             try:
                 self._root.after(0, func, *args)
@@ -218,7 +218,7 @@ class MediaWindow:
                 pass
 
     def _invoke_and_wait(self, func, *args, timeout: float = 2.0):
-        """tkinter スレッド上で関数を実行し、完了を待つ。"""
+        """Execute a function on the tkinter thread and wait for completion."""
         if not self._root:
             return
         done = threading.Event()
@@ -236,40 +236,40 @@ class MediaWindow:
         done.wait(timeout=timeout)
 
     # ------------------------------------------------------------------
-    # 動画再生
+    # Video playback
     # ------------------------------------------------------------------
 
     def play_video(self, video_path: str) -> bool:
-        """動画ファイルを再生する。ウィンドウが最小化されていたら復元する。"""
+        """Play a video file. Restores the window if it is off-screen."""
         p = Path(video_path)
         if not p.exists():
-            logger.error(f"動画ファイルが見つかりません: {video_path}")
+            logger.error(f"Video file not found: {video_path}")
             return False
 
-        # 静止画モードだった場合、canvas を非表示にする（完了を待つ）
+        # If currently in image mode, hide the canvas first (wait for completion)
         self._invoke_and_wait(self._switch_to_video_mode)
 
         media = self._vlc_instance.media_new(str(p))
         self._media_player.set_media(media)
         ret = self._media_player.play()
         if ret == -1:
-            logger.error(f"VLC play() が失敗: {video_path}")
+            logger.error(f"VLC play() failed: {video_path}")
             return False
 
         self._mode = "video"
         self._invoke(self._move_onscreen)
-        logger.info(f"動画再生開始: {p.name}")
+        logger.info(f"Video playback started: {p.name}")
         return True
 
     def _switch_to_video_mode(self):
-        """canvas を非表示にして video_frame を前面に出す。"""
+        """Hide the canvas and bring the video_frame to the front."""
         self._canvas.place_forget()
         self._video_frame.place(x=0, y=0, width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
 
     def swap_video(self, video_path: str) -> bool:
-        """再生中に別の動画へ切り替える。"""
+        """Switch to a different video while one is already playing."""
         self._media_player.stop()
-        # VLC が停止するまで少し待つ
+        # Wait briefly for VLC to stop
         for _ in range(20):
             if self._media_player.get_state() == vlc.State.Stopped:
                 break
@@ -277,122 +277,122 @@ class MediaWindow:
         return self.play_video(video_path)
 
     # ------------------------------------------------------------------
-    # 静止画表示
+    # Still-image display
     # ------------------------------------------------------------------
 
     def show_image(self, image_path: str) -> bool:
-        """静止画を表示する。動画再生中なら停止してから切り替える。"""
+        """Display a still image. Stops video playback first if active."""
         p = Path(image_path)
         if not p.exists():
-            logger.error(f"画像ファイルが見つかりません: {image_path}")
+            logger.error(f"Image file not found: {image_path}")
             return False
 
-        # 動画を停止
+        # Stop video if playing
         if self._mode == "video":
             self._media_player.stop()
 
         self._mode = "image"
         self._invoke(self._display_image, str(p))
         self._invoke(self._move_onscreen)
-        logger.info(f"静止画表示: {p.name}")
+        logger.info(f"Still image displayed: {p.name}")
         return True
 
     def _display_image(self, image_path: str):
-        """tkinter スレッド上で画像を Canvas に描画する。"""
+        """Draw the image on the Canvas (runs on the tkinter thread)."""
         try:
             img = Image.open(image_path)
-            # ウィンドウサイズにフィットさせる（アスペクト比維持・拡大も行う）
+            # Fit to window size while preserving aspect ratio (upscaling allowed)
             img_w, img_h = img.size
             scale = min(WINDOW_WIDTH / img_w, WINDOW_HEIGHT / img_h)
             new_w = int(img_w * scale)
             new_h = int(img_h * scale)
             img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-            # Canvas を前面に出す（place_forget→place で後から配置した方が前面に来る）
+            # Bring canvas to front (place_forget -> place puts it on top)
             self._video_frame.place_forget()
             self._canvas.place(x=0, y=0, width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
 
             self._tk_image = ImageTk.PhotoImage(img)
             self._canvas.delete("all")
-            # 中央に配置
+            # Centre the image
             x = WINDOW_WIDTH // 2
             y = WINDOW_HEIGHT // 2
             self._canvas.create_image(x, y, anchor=tk.CENTER, image=self._tk_image)
         except Exception as e:
-            logger.error(f"画像表示エラー: {e}")
+            logger.error(f"Image display error: {e}")
 
     # ------------------------------------------------------------------
-    # 再生コントロール
+    # Playback controls
     # ------------------------------------------------------------------
 
     def pause(self):
-        """再生中なら一時停止する。"""
+        """Pause playback if a video is playing."""
         if self._mode == "video" and self._media_player:
             state = self._media_player.get_state()
             if state == vlc.State.Playing:
                 self._media_player.pause()
-                logger.info("一時停止")
+                logger.info("Paused")
 
     def resume(self):
-        """一時停止中なら再開する。"""
+        """Resume playback if a video is paused."""
         if self._mode == "video" and self._media_player:
             state = self._media_player.get_state()
             if state == vlc.State.Paused:
                 self._media_player.pause()  # toggle
-                logger.info("再生再開")
+                logger.info("Resumed")
 
     def toggle_pause(self):
-        """再生/一時停止をトグルする。"""
+        """Toggle between play and pause."""
         if self._mode == "video" and self._media_player:
             state = self._media_player.get_state()
             if state == vlc.State.Playing:
                 self._media_player.pause()
-                logger.info("一時停止")
+                logger.info("Paused")
             elif state == vlc.State.Paused:
                 self._media_player.pause()
-                logger.info("再生再開")
+                logger.info("Resumed")
 
     def stop(self):
-        """再生・表示を停止し、ウィンドウを画面外に移動する。"""
+        """Stop playback/display and move the window off-screen."""
         if self._media_player:
             self._media_player.stop()
         self._mode = "idle"
         self._invoke(self._clear_display)
         self._invoke(self._move_offscreen)
-        logger.info("停止・画面外移動")
+        logger.info("Stopped and moved off-screen")
 
     def _clear_display(self):
-        """Canvas をクリアする。"""
+        """Clear the Canvas."""
         if self._canvas:
             self._canvas.delete("all")
             self._canvas.place_forget()
         self._tk_image = None
 
     # ------------------------------------------------------------------
-    # ウィンドウ操作
+    # Window management
     # ------------------------------------------------------------------
 
     def minimize(self):
-        """ウィンドウを画面外に移動する（OBSが認識できるよう最小化は使わない）。"""
+        """Move the window off-screen (avoid iconify so OBS can still capture it)."""
         self._invoke(self._move_offscreen)
-        logger.info("ウィンドウ画面外移動")
+        logger.info("Window moved off-screen")
 
     def restore(self):
-        """ウィンドウを画面内に戻す。"""
+        """Bring the window back on-screen."""
         self._invoke(self._move_onscreen)
-        logger.info("ウィンドウ復元")
+        logger.info("Window restored")
 
     def _move_offscreen(self):
-        """ウィンドウを画面外に移動する。"""
+        """Move the window off-screen."""
         self._root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+-{WINDOW_WIDTH + 100}+0")
 
     def _move_onscreen(self):
-        """ウィンドウを画面内（0,0）に戻す。"""
+        """Return the window to the visible area (0, 0)."""
         self._root.deiconify()
         self._root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+0+0")
 
     # ------------------------------------------------------------------
-    # 状態確認
+    # State queries
     # ------------------------------------------------------------------
 
     def get_mode(self) -> str:
@@ -410,16 +410,16 @@ class MediaWindow:
 
 
 # ══════════════════════════════════════════════════════════════════
-# キーボードショートカット登録
+# Keyboard shortcut registration
 # ══════════════════════════════════════════════════════════════════
 
 def register_hotkeys(window: MediaWindow):
     """
-    グローバルキーボードショートカットを登録する。
-    F5: 再生/一時停止トグル
-    F6: 停止
-    F7: 最小化
-    F8: 復元
+    Register global keyboard shortcuts.
+    F5: Play / pause toggle
+    F6: Stop
+    F7: Minimize (move off-screen)
+    F8: Restore
     """
     import keyboard as kb
 
@@ -428,16 +428,16 @@ def register_hotkeys(window: MediaWindow):
     kb.on_press_key("f7", lambda _: window.minimize(), suppress=False)
     kb.on_press_key("f8", lambda _: window.restore(), suppress=False)
 
-    logger.info("ホットキー登録: F5=再生/停止トグル, F6=停止, F7=最小化, F8=復元")
+    logger.info("Hotkeys registered: F5=play/pause toggle, F6=stop, F7=minimize, F8=restore")
 
 
 # ══════════════════════════════════════════════════════════════════
-# ContentIndex 連携ヘルパー
+# ContentIndex integration helper
 # ══════════════════════════════════════════════════════════════════
 
 def resolve_content_path(entry: dict) -> Optional[str]:
-    """ContentIndex エントリから動画/静止画の絶対パスを返す。"""
-    # 動画
+    """Return the absolute path to the video or still image for a ContentIndex entry."""
+    # Video
     for key in ("video_path_abs", "video_path"):
         p = entry.get(key)
         if p:
@@ -446,7 +446,7 @@ def resolve_content_path(entry: dict) -> Optional[str]:
                 path = _PROJECT_ROOT / p
             if path.exists():
                 return str(path)
-    # スクリーンショット
+    # Screenshot
     for key in ("screenshot_path_abs", "screenshot_path"):
         p = entry.get(key)
         if p:
@@ -459,41 +459,41 @@ def resolve_content_path(entry: dict) -> Optional[str]:
 
 
 # ══════════════════════════════════════════════════════════════════
-# テスト用エントリポイント
+# Test entry point
 # ══════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG,
                         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-    # アセットダウンロード
+    # Download assets
     mgr = ImageAssetManager()
     mgr.ensure_downloaded()
 
-    # ウィンドウ起動
+    # Launch window
     window = MediaWindow()
     window.start()
     register_hotkeys(window)
 
-    print("MediaWindow テスト起動")
-    print("  F5: 再生/一時停止トグル")
-    print("  F6: 停止")
-    print("  F7: 最小化")
-    print("  F8: 復元")
+    print("MediaWindow test launch")
+    print("  F5: play/pause toggle")
+    print("  F6: stop")
+    print("  F7: minimize")
+    print("  F8: restore")
     print()
 
-    # テスト: 静止画表示
+    # Test: display a still image
     path = mgr.get_path("hormuz_map")
     if path:
-        print(f"静止画テスト: {path}")
+        print(f"Still image test: {path}")
         window.show_image(path)
     else:
-        print("hormuz_map が見つかりません")
+        print("hormuz_map not found")
 
-    print("Ctrl+C で終了")
+    print("Ctrl+C to exit")
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         window.close()
-        print("終了")
+        print("Exited")

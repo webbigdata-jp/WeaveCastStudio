@@ -1,32 +1,33 @@
 """
 compe_M4/gemini_live_client.py
 
-Gemini Live API を使ってジャーナリストの音声指示を受け取り、
-Function Calling 経由で MediaWindow を操作するクライアント。
+Live broadcast client that receives voice commands from a journalist via the
+Gemini Live API and controls MediaWindow through Function Calling.
 
-【PTT モード】
-  F9 を押している間だけマイク音声を Gemini に送信する。
-  離した瞬間に audio_stream_end を送って Gemini に発話終了を伝える。
-  Gemini が応答中でも F9 で割り込み（barge-in）可能。
+PTT mode:
+  Microphone audio is sent to Gemini only while F9 is held down.
+  Releasing F9 signals end-of-speech to Gemini.
+  Barge-in (interrupting Gemini mid-response) is supported via F9.
 
-【キーボードショートカット】
-  F5: 再生/一時停止トグル
-  F6: 停止
-  F7: ウィンドウ最小化
-  F8: ウィンドウ復元
-  F9: PTT（押しながら話す）
+Keyboard shortcuts:
+  F5: Play / pause toggle
+  F6: Stop
+  F7: Minimize media window
+  F8: Restore media window
+  F9: Push-to-talk (hold and speak)
 
-【コンテンツ検索方針（A案）】
-  起動時に ArticleStore.get_today_titles() と ContentIndex の動画一覧を
-  両方 system_instruction に渡す。
-  「国連についてレポートを」のような自然語指示に対して Gemini が
-  意味的に最適な content_id を自分で選んで play_video を呼び出す。
-  store.search() は補助ツールとして提供し、Gemini が必要と判断した場合のみ使用。
+Content selection strategy:
+  At startup, both ArticleStore.get_today_titles() and the ContentIndex video
+  list are injected into system_instruction.
+  For natural-language requests such as "show a report about the UN", Gemini
+  selects the most semantically relevant content_id and calls play_video itself.
+  store.search() is provided as a supplementary tool, used only when Gemini
+  decides it is necessary.
 
-依存:
+Dependencies:
     uv add pyaudio google-genai keyboard python-dotenv python-vlc Pillow
 
-使い方:
+Usage:
     python gemini_live_client.py
 """
 
@@ -51,7 +52,7 @@ from breaking_news_server import (
 )
 
 
-# ── プロジェクトルートを sys.path に追加 ──────────────────────────
+# ── Add project root to sys.path ──────────────────────────────────
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent
 if str(_PROJECT_ROOT) not in sys.path:
@@ -64,75 +65,80 @@ from media_window import (                             # noqa: E402
     resolve_content_path,
 )
 from content_index import ContentIndexManager          # noqa: E402
+from shared.language_utils import get_language_config  # noqa: E402
 
-# ArticleStore は compe_M3/ 配下なので sys.path に追加
+# ArticleStore lives under compe_M3/, so add it to sys.path
 _M3_ROOT = _PROJECT_ROOT / "compe_M3"
 if str(_M3_ROOT) not in sys.path:
     sys.path.insert(0, str(_M3_ROOT))
 
-# ── ロギング ────────────────────────────────────────────────────────
+# ── Logging ──────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# ArticleStore の import（失敗しても起動継続）
+# Import ArticleStore (continue startup even if unavailable)
 try:
     from store.article_store import ArticleStore
     _ARTICLE_STORE_AVAILABLE = True
 except ImportError:
-    logger.warning("ArticleStore が import できません。記事一覧なしで起動します。")
+    logger.warning("ArticleStore could not be imported. Starting without article list.")
     _ARTICLE_STORE_AVAILABLE = False
 
-# ── 環境変数 ────────────────────────────────────────────────────────
-load_dotenv(_PROJECT_ROOT / "compe_M1" / "config" / ".env")
+# ── Environment variables ─────────────────────────────────────────────
+load_dotenv(_PROJECT_ROOT / ".env")
 API_KEY = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
     raise EnvironmentError(
-        "GOOGLE_API_KEY が設定されていません。"
-        "compe_M1/config/.env を確認してください。"
+        "GOOGLE_API_KEY is not set. "
+        "Please check WeaveCastStudio/.env."
     )
 
-# ── Gemini モデル ───────────────────────────────────────────────────
+# ── Language configuration (reads LANGUAGE from .env) ────────────────
+_LANG = get_language_config()
+logger.info(f"Language: {_LANG.bcp47_code} ({_LANG.prompt_lang})")
+
+# ── Gemini model ─────────────────────────────────────────────────────
 MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 
-# ── 音声設定（Live API の仕様に合わせて固定） ───────────────────────
+# ── Audio settings (fixed to Live API specification) ─────────────────
 FORMAT       = pyaudio.paInt16
 CHANNELS     = 1
-SEND_RATE    = 16000   # マイク入力: 16kHz
-RECEIVE_RATE = 24000   # Gemini 出力: 24kHz
+SEND_RATE    = 16000   # Microphone input: 16 kHz
+RECEIVE_RATE = 24000   # Gemini output: 24 kHz
 CHUNK_SIZE   = 1024
 
-# ── PTT キー ────────────────────────────────────────────────────────
+# ── PTT key ──────────────────────────────────────────────────────────
 PTT_KEY = "f9"
 
-# ── ArticleStore DB パス ────────────────────────────────────────────
+# ── ArticleStore DB path ──────────────────────────────────────────────
 _DB_PATH = str(_M3_ROOT / "data" / "articles.db")
 
 
 # ══════════════════════════════════════════════════════════════════
-# 起動時データロード
+# Startup data loading
 # ══════════════════════════════════════════════════════════════════
 
 def load_today_titles() -> list[dict]:
-    """ArticleStore から本日の記事タイトル一覧を取得する。"""
+    """Load today's article title list from ArticleStore."""
     if not _ARTICLE_STORE_AVAILABLE:
         return []
     try:
         store = ArticleStore(db_path=_DB_PATH)
         titles = store.get_today_titles(min_importance=3.0)
-        logger.info(f"ArticleStore: {len(titles)} 件の記事タイトルをロード")
+        logger.info(f"ArticleStore: loaded {len(titles)} article title(s)")
         return titles
     except Exception as e:
-        logger.warning(f"ArticleStore からの取得に失敗: {e}")
+        logger.warning(f"Failed to fetch from ArticleStore: {e}")
         return []
 
 
 def load_content_list() -> list[dict]:
     """
-    ContentIndex から再生可能なコンテンツ一覧を取得する。
-    動画だけでなくスクリーンショット（静止画）も含む。
+    Load the list of playable content from ContentIndex.
+    Includes both videos and screenshots (still images).
     Returns:
         [{content_id, title, type, score, topic_tags, path, media_type}, ...]
     """
@@ -145,7 +151,7 @@ def load_content_list() -> list[dict]:
         if not resolved:
             continue
 
-        # メディア種別を判定
+        # Determine media type from file extension
         ext = Path(resolved).suffix.lower()
         if ext in (".mp4", ".avi", ".mkv", ".mov", ".webm"):
             media_type = "video"
@@ -164,20 +170,21 @@ def load_content_list() -> list[dict]:
             "media_type": media_type,
         })
 
-    logger.info(f"ContentIndex: {len(content_list)} 件のコンテンツをロード")
+    logger.info(f"ContentIndex: loaded {len(content_list)} content item(s)")
     return content_list
 
 
 # ══════════════════════════════════════════════════════════════════
-# System Instruction 生成
+# System instruction builder
 # ══════════════════════════════════════════════════════════════════
 
 def _build_system_instruction(
     today_titles: list[dict],
     content_list: list[dict],
     image_assets: list[dict],
+    prompt_lang: str,
 ) -> str:
-    # ── 本日の記事一覧（上限30件）──
+    # ── Today's article list (up to 30 items) ──
     if today_titles:
         articles_lines = []
         for a in today_titles[:30]:
@@ -190,15 +197,15 @@ def _build_system_instruction(
             except Exception:
                 pass
             articles_lines.append(
-                f"  - [記事 id={a['id']}] {a.get('title', '')}{breaking}"
+                f"  - [article id={a['id']}] {a.get('title', '')}{breaking}"
                 f" (score={a.get('importance_score', '?')}"
                 f", src={a.get('source_name', '')}){topics_str}"
             )
-        articles_section = "【本日の主要記事】\n" + "\n".join(articles_lines)
+        articles_section = "[TODAY'S TOP ARTICLES]\n" + "\n".join(articles_lines)
     else:
-        articles_section = "【本日の主要記事】\n  （データなし）"
+        articles_section = "[TODAY'S TOP ARTICLES]\n  (no data)"
 
-    # ── 再生可能なコンテンツ一覧 ──
+    # ── Playable content list ──
     if content_list:
         videos_lines = []
         for v in content_list:
@@ -207,11 +214,11 @@ def _build_system_instruction(
                 f"  - [content_id={v['content_id']}] [{v['type']}] {v['title']}"
                 f" (score={v['score']}, tags={tags}, media={v.get('media_type', '?')})"
             )
-        videos_section = "【再生可能な動画・クリップ一覧】\n" + "\n".join(videos_lines)
+        videos_section = "[PLAYABLE VIDEOS / CLIPS]\n" + "\n".join(videos_lines)
     else:
-        videos_section = "【再生可能な動画・クリップ一覧】\n  （動画なし）"
+        videos_section = "[PLAYABLE VIDEOS / CLIPS]\n  (none)"
 
-    # ── 静止画アセット一覧 ──
+    # ── Still-image asset list ──
     if image_assets:
         images_lines = []
         for a in image_assets:
@@ -219,13 +226,16 @@ def _build_system_instruction(
             images_lines.append(
                 f"  - [image_id={a['id']}] {a['title']} (tags={tags})"
             )
-        images_section = "【表示可能な静止画アセット】\n" + "\n".join(images_lines)
+        images_section = "[AVAILABLE STILL-IMAGE ASSETS]\n" + "\n".join(images_lines)
     else:
-        images_section = "【表示可能な静止画アセット】\n  （なし）"
+        images_section = "[AVAILABLE STILL-IMAGE ASSETS]\n  (none)"
 
-    return f"""あなたは StoryWire のニュース放送 AI ディレクターです。
-ジャーナリストが OBS でライブ配信中に音声で指示を出します。
-指示に応じて動画の再生・停止・静止画表示・ウィンドウ操作などのツールを呼び出してください。
+    return f"""You are the AI news broadcast director for WeaveCastStudio.
+A journalist is giving you voice commands during a live OBS stream.
+Call the appropriate tools to play videos, stop playback, display still images,
+and manage the media window as instructed.
+
+Always respond in {prompt_lang}.
 
 {articles_section}
 
@@ -233,33 +243,35 @@ def _build_system_instruction(
 
 {images_section}
 
-【動画選択のルール】
-- ジャーナリストが「〇〇についての動画を流して」「〇〇のレポートをお願い」などと指示したら、
-  上記の動画一覧から最も関連性の高い content_id を選んで play_video を呼び出す。
-- 記事一覧の topics や title も参考にして最適なコンテンツを選ぶこと。
-- 該当動画が複数ある場合は score が高いものを優先する。
-- 動画一覧に適切なものが見当たらない場合は search_articles ツールで追加検索してから判断する。
+[VIDEO SELECTION RULES]
+- When the journalist says something like "play a video about X" or "show a report on X",
+  select the most relevant content_id from the video list above and call play_video.
+- Use the topics and title fields in the article list to find the best match.
+- When multiple videos match, prefer the one with the higher score.
+- If no suitable video is found in the list, run search_articles first, then decide.
 
-【静止画表示のルール】
-- 「ホルムズ海峡の地図を出して」「イランの地図を見せて」のような指示には show_image を使う。
-- image_id で静止画アセットを指定する。
-- file_path での直接指定も可能。
-- 動画再生中に静止画を指示された場合は、動画を停止して静止画に切り替える。
+[STILL-IMAGE DISPLAY RULES]
+- For instructions such as "show the map of the Strait of Hormuz" or "show the Iran map",
+  use show_image.
+- Specify the asset using image_id.
+- Direct specification via file_path is also supported.
+- If a still image is requested while a video is playing, stop the video and switch to the image.
 
-【応答ルール】
-- 応答は日本語で簡潔に行う。
-- ツールを呼び出す場合は「〇〇の動画を再生します」「〇〇の地図を表示します」など一言添える。
-- ジャーナリストはライブ配信中のため、余計な前置きは不要。
-- 画面下部にニュースティッカーが常時スクロールしている。
-- ArticleStore に is_breaking=True の記事が入ると、ティッカー上で赤背景で強調表示される。
-- ジャーナリストが「今の速報は何？」「ブレーキングニュースについて教えて」などと
-  質問してきたら、search_articles ツールで is_breaking 記事を検索し、
-  口頭で解説すること。関連するスクリーンショットや動画があれば show_image / play_video で表示すること。
+[RESPONSE RULES]
+- Keep responses concise; the journalist is live on air.
+- When calling a tool, briefly announce what you are doing
+  (e.g. "Playing the video.", "Displaying the map.").
+- No unnecessary preamble.
+- A news ticker is always scrolling at the bottom of the screen.
+- Articles with is_breaking=True in ArticleStore are highlighted in red on the ticker.
+- If the journalist asks "What is the breaking news?" or similar,
+  search for is_breaking articles with search_articles, explain verbally,
+  and display any related screenshots or videos with show_image / play_video.
 """
 
 
 # ══════════════════════════════════════════════════════════════════
-# ツール定義
+# Tool definitions
 # ══════════════════════════════════════════════════════════════════
 
 def _make_tools() -> list[dict]:
@@ -269,15 +281,16 @@ def _make_tools() -> list[dict]:
                 {
                     "name": "play_video",
                     "description": (
-                        "指定した content_id の動画を再生する。"
-                        "system_instruction の動画一覧から最適な content_id を選んで呼び出すこと。"
+                        "Play the video identified by the given content_id. "
+                        "Select the most appropriate content_id from the video list "
+                        "in system_instruction and call this function."
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "content_id": {
                                 "type": "string",
-                                "description": "再生する動画の content_id（動画一覧から選ぶ）",
+                                "description": "content_id of the video to play (choose from the video list)",
                             }
                         },
                         "required": ["content_id"],
@@ -285,61 +298,62 @@ def _make_tools() -> list[dict]:
                 },
                 {
                     "name": "stop_video",
-                    "description": "現在再生中の動画・静止画を停止してウィンドウを最小化する。",
+                    "description": "Stop the currently playing video or still image and minimize the window.",
                 },
                 {
                     "name": "pause_video",
-                    "description": "再生中の動画を一時停止する。",
+                    "description": "Pause the currently playing video.",
                 },
                 {
                     "name": "resume_video",
-                    "description": "一時停止中の動画を再開する。",
+                    "description": "Resume a paused video.",
                 },
                 {
                     "name": "show_image",
                     "description": (
-                        "静止画をウィンドウに表示する。"
-                        "image_id（静止画アセット一覧の ID）または file_path（ファイルパス）で指定する。"
-                        "動画再生中の場合は自動的に停止して静止画に切り替わる。"
+                        "Display a still image in the media window. "
+                        "Specify the asset by image_id (from the still-image asset list) "
+                        "or by file_path (absolute file path). "
+                        "If a video is playing, it will be stopped automatically."
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "image_id": {
                                 "type": "string",
-                                "description": "静止画アセットの ID（例: hormuz_map）。image_id または file_path のいずれかを指定する。",
+                                "description": "ID of the still-image asset (e.g. hormuz_map). Provide either image_id or file_path.",
                             },
                             "file_path": {
                                 "type": "string",
-                                "description": "画像ファイルの絶対パス。image_id が指定されていない場合に使用する。",
+                                "description": "Absolute path to the image file. Used when image_id is not specified.",
                             },
                         },
                     },
                 },
                 {
                     "name": "minimize_window",
-                    "description": "メディアウィンドウを最小化する。",
+                    "description": "Move the media window off-screen (minimize).",
                 },
                 {
                     "name": "restore_window",
-                    "description": "最小化されたメディアウィンドウを復元する。",
+                    "description": "Restore the minimized media window.",
                 },
                 {
                     "name": "search_articles",
                     "description": (
-                        "ArticleStore をキーワードで検索し関連記事を返す。"
-                        "動画一覧に適切なものが見当たらない場合の補助ツール。"
+                        "Search ArticleStore by keyword and return matching articles. "
+                        "Use as a fallback when no suitable video is found in the list."
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "検索キーワード（英語推奨: 'UN', 'Iran' など）",
+                                "description": "Search keyword (English recommended: 'UN', 'Iran', etc.)",
                             },
                             "limit": {
                                 "type": "integer",
-                                "description": "最大取得件数（デフォルト5）",
+                                "description": "Maximum number of results to return (default 5)",
                             },
                         },
                         "required":["query"],
@@ -347,7 +361,7 @@ def _make_tools() -> list[dict]:
                 },
                 {
                     "name": "list_videos",
-                    "description": "現在再生可能な動画・クリップの一覧を読み上げる。",
+                    "description": "Read out the list of currently playable videos and clips.",
                 },
             ]
         }
@@ -379,13 +393,13 @@ class ToolExecutor:
                 return self._play_video(args.get("content_id", ""))
             elif name == "stop_video":
                 self._window.stop()
-                return {"result": "停止しました"}
+                return {"result": "Stopped"}
             elif name == "pause_video":
                 self._window.pause()
-                return {"result": "一時停止しました"}
+                return {"result": "Paused"}
             elif name == "resume_video":
                 self._window.resume()
-                return {"result": "再開しました"}
+                return {"result": "Resumed"}
             elif name == "show_image":
                 return self._show_image(
                     args.get("image_id", ""),
@@ -393,10 +407,10 @@ class ToolExecutor:
                 )
             elif name == "minimize_window":
                 self._window.minimize()
-                return {"result": "ウィンドウを最小化しました"}
+                return {"result": "Window minimized"}
             elif name == "restore_window":
                 self._window.restore()
-                return {"result": "ウィンドウを復元しました"}
+                return {"result": "Window restored"}
             elif name == "search_articles":
                 return self._search_articles(
                     args.get("query", ""),
@@ -405,17 +419,17 @@ class ToolExecutor:
             elif name == "list_videos":
                 return self._list_videos()
             else:
-                return {"error": f"未知のツール: {name}"}
+                return {"error": f"Unknown tool: {name}"}
         except Exception as e:
-            logger.error(f"[ToolCall] {name} 実行エラー: {e}", exc_info=True)
+            logger.error(f"[ToolCall] {name} execution error: {e}", exc_info=True)
             return {"error": str(e)}
 
     def _play_video(self, content_id: str) -> dict:
         if not content_id:
-            return {"error": "content_id が指定されていません"}
+            return {"error": "content_id is required"}
         entry = self._content_map.get(content_id)
         if entry is None:
-            return {"error": f"content_id '{content_id}' が見つかりません"}
+            return {"error": f"content_id '{content_id}' not found"}
 
         path = entry["path"]
         media_type = entry.get("media_type", "video")
@@ -429,35 +443,35 @@ class ToolExecutor:
                 ok = self._window.play_video(path)
 
         if ok:
-            return {"result": f"「{entry['title']}」を表示中"}
-        return {"error": f"再生に失敗しました: {content_id}"}
+            return {"result": f"Now showing: {entry['title']}"}
+        return {"error": f"Playback failed: {content_id}"}
 
     def _show_image(self, image_id: str, file_path: str) -> dict:
         if image_id:
             path = self._image_assets.get_path(image_id)
             if not path:
-                return {"error": f"静止画アセット '{image_id}' が見つかりません"}
+                return {"error": f"Still-image asset '{image_id}' not found"}
             asset = self._image_assets.get(image_id)
             title = asset.get("title", image_id) if asset else image_id
         elif file_path:
             path = file_path
             title = Path(file_path).name
         else:
-            return {"error": "image_id または file_path を指定してください"}
+            return {"error": "Specify either image_id or file_path"}
 
         ok = self._window.show_image(path)
         if ok:
-            return {"result": f"「{title}」を表示中"}
-        return {"error": f"画像の表示に失敗しました: {path}"}
+            return {"result": f"Now showing: {title}"}
+        return {"error": f"Failed to display image: {path}"}
 
     def _search_articles(self, query: str, limit: int = 5) -> dict:
         if not _ARTICLE_STORE_AVAILABLE:
-            return {"error": "ArticleStore が利用できません"}
+            return {"error": "ArticleStore is not available"}
         try:
             store = ArticleStore(db_path=_DB_PATH)
             results = store.search(query, min_importance=3.0, limit=limit)
             if not results:
-                return {"result": f"'{query}' に関する記事は見つかりませんでした"}
+                return {"result": f"No articles found for '{query}'"}
             lines = [
                 f"id={r['id']}: {r.get('title', '')} "
                 f"(score={r.get('importance_score', '?')}, src={r.get('source_name', '')})"
@@ -469,7 +483,7 @@ class ToolExecutor:
 
     def _list_videos(self) -> dict:
         if not self._content_list:
-            return {"result": "再生可能な動画がありません"}
+            return {"result": "No playable videos available"}
         lines = [
             f"{v['content_id']}: [{v['type']}] {v['title']} (score={v['score']})"
             for v in self._content_list
@@ -478,7 +492,7 @@ class ToolExecutor:
 
 
 # ══════════════════════════════════════════════════════════════════
-# GeminiLiveClient（PTT + コンテンツ検索 + 静止画対応版）
+# GeminiLiveClient (PTT + content search + still-image support)
 # ══════════════════════════════════════════════════════════════════
 
 class GeminiLiveClient:
@@ -501,11 +515,11 @@ class GeminiLiveClient:
         self._session = None
         self._running = False
 
-        # ── セッション再接続用 ──
-        self._resumption_handle: str | None = None   # Session Resumption ハンドル
-        self._session_lost = asyncio.Event()          # セッション切断通知
+        # ── Session reconnection ──
+        self._resumption_handle: str | None = None   # Session Resumption handle
+        self._session_lost = asyncio.Event()          # Signals session disconnect
         self._max_reconnect_attempts = 5
-        self._reconnecting = False                    # 再接続中フラグ
+        self._reconnecting = False                    # True while reconnecting
 
     def _build_config(self) -> dict:
         return {
@@ -515,21 +529,25 @@ class GeminiLiveClient:
                 self._today_titles,
                 self._content_list,
                 self._image_asset_mgr.list_all(),
+                _LANG.prompt_lang,
             ),
             "input_audio_transcription": {},
             "output_audio_transcription": {},
-            # ── セッション維持用 ──
+            # ── Session persistence ──
             "session_resumption": types.SessionResumptionConfig(
                 handle=self._resumption_handle,
             ),
             "context_window_compression": types.ContextWindowCompressionConfig(
                 sliding_window=types.SlidingWindow(),
             ),
+            "speech_config": types.SpeechConfig(
+                language_code=_LANG.bcp47_code,
+            ),
         }
 
     async def _task_ptt_mic(self):
             mic_info = self._pya.get_default_input_device_info()
-            logger.info(f"マイク: {mic_info['name']}")
+            logger.info(f"Microphone: {mic_info['name']}")
             stream = await asyncio.to_thread(
                 self._pya.open,
                 format=FORMAT, channels=CHANNELS, rate=SEND_RATE,
@@ -545,16 +563,16 @@ class GeminiLiveClient:
                     is_pressed = kb.is_pressed(PTT_KEY)
 
                     if is_pressed and not was_pressed:
-                        logger.info(f"[PTT] 開始 ({PTT_KEY.upper()} 押下)")
-                        print(f"\n🎙  話しかけてください... ({PTT_KEY.upper()} を押している間)")
+                        logger.info(f"[PTT] Start ({PTT_KEY.upper()} pressed)")
+                        print(f"\n🎙  Speak now... (hold {PTT_KEY.upper()})")
                         silence_chunks_left = 0
 
                     elif was_pressed and not is_pressed:
-                        logger.info("[PTT] 終了（音声送信停止）")
-                        print("⏹  送信停止。Gemini が処理中...\n")
+                        logger.info("[PTT] End (audio send stopped)")
+                        print("⏹  Stopped. Gemini is processing...\n")
                         silence_chunks_left = 30
 
-                    # セッション切断中は送信しない
+                    # Do not send while session is disconnected
                     if self._session and not self._reconnecting:
                         if is_pressed:
                             try:
@@ -562,7 +580,7 @@ class GeminiLiveClient:
                                     audio=types.Blob(data=data, mime_type=f"audio/pcm;rate={SEND_RATE}")
                                 )
                             except Exception:
-                                pass  # 切断直後の送信エラーは無視
+                                pass  # Ignore send errors immediately after disconnect
                         elif silence_chunks_left > 0:
                             try:
                                 silence_data = b'\x00' * len(data)
@@ -579,28 +597,28 @@ class GeminiLiveClient:
                 stream.close()
 
     async def _task_receive(self):
-        # receive() は turn_complete でイテレーションが終了するため、
-        # while ループで再度 receive() を呼び直す必要がある。
-        # (参考: https://github.com/googleapis/python-genai/issues/1224)
+        # receive() ends iteration on turn_complete, so we must call
+        # receive() again in a while loop to continue receiving.
+        # (ref: https://github.com/googleapis/python-genai/issues/1224)
         while self._running:
             try:
                 async for response in self._session.receive():
-                    # ── Session Resumption ハンドルの保持 ──
+                    # ── Store Session Resumption handle ──
                     if response.session_resumption_update:
                         update = response.session_resumption_update
                         if update.resumable and update.new_handle:
                             self._resumption_handle = update.new_handle
                             logger.debug(
-                                f"[Session] resumption handle 更新: "
+                                f"[Session] resumption handle updated: "
                                 f"{self._resumption_handle[:20]}..."
                             )
-                    # ── GoAway メッセージ（まもなく切断） ──
+                    # ── GoAway message (disconnection imminent) ──
                     if response.go_away is not None:
                         logger.warning(
-                            f"[Session] GoAway 受信 — 残り時間: "
+                            f"[Session] GoAway received — time left: "
                             f"{response.go_away.time_left}"
                         )
-                        print("⚠️  サーバーからまもなく切断されます。自動再接続します...")
+                        print("⚠️  Server will disconnect shortly. Reconnecting automatically...")
                     if response.data is not None:
                         await self._audio_out_queue.put(response.data)
                     if response.text:
@@ -608,23 +626,23 @@ class GeminiLiveClient:
                     if response.server_content and response.server_content.input_transcription:
                         t = response.server_content.input_transcription.text
                         if t:
-                            print(f"📝 [あなた]  {t}")
+                            print(f"📝 [You]     {t}")
                     if response.server_content and response.server_content.output_transcription:
                         t = response.server_content.output_transcription.text
                         if t:
                             print(f"🤖 [Gemini] {t}")
                     if response.server_content and response.server_content.turn_complete:
                         await self._audio_out_queue.put(None)
-                        print("─── (F9 で話しかけてください) ───\n")
+                        print(f"─── (Hold {PTT_KEY.upper()} to speak) ───\n")
                     if response.tool_call:
                         asyncio.create_task(self._handle_tool_call(response.tool_call))
             except Exception as e:
                 if not self._running:
                     break
-                logger.warning(f"[RECV] receive() で例外: {type(e).__name__}: {e}")
-                # セッション切断を通知して receive ループを抜ける
+                logger.warning(f"[RECV] Exception in receive(): {type(e).__name__}: {e}")
+                # Notify session loss and exit receive loop
                 self._session_lost.set()
-                return  # run() 側で再接続を処理する
+                return  # Reconnection is handled in run()
 
     async def _handle_tool_call(self, tool_call):
             try:
@@ -635,17 +653,17 @@ class GeminiLiveClient:
                     function_responses.append(
                         types.FunctionResponse(id=fc.id, name=fc.name, response=result)
                     )
-                    logger.info(f"[ToolResult] {fc.name} → {result}")
+                    logger.info(f"[ToolResult] {fc.name} -> {result}")
 
                 if hasattr(self._session, "send_tool_response"):
                     await self._session.send_tool_response(function_responses=function_responses)
                 elif hasattr(self._session, "send"):
                     await self._session.send(input={"function_responses": function_responses})
                 else:
-                    logger.error("セッションにツール結果を送信するメソッドが見つかりません。")
+                    logger.error("No method found on session to send tool response.")
 
             except Exception as e:
-                logger.error(f"[_handle_tool_call] ツール結果の送信中にエラー: {e}", exc_info=True)
+                logger.error(f"[_handle_tool_call] Error sending tool response: {e}", exc_info=True)
 
     async def _task_play_audio(self):
         stream = await asyncio.to_thread(
@@ -666,18 +684,19 @@ class GeminiLiveClient:
     async def run(self):
         self._running = True
 
-        # ── 初回接続・情報表示 ──
+        # ── Initial connection / info display ──
         print("\n" + "═" * 55)
-        print("  StoryWire M4 - Gemini Live PTT モード")
+        print("  WeaveCastStudio M4 - Gemini Live PTT Mode")
         print("═" * 55)
-        print(f"  記事: {len(self._today_titles)} 件 / 動画: {len(self._content_list)} 件")
-        print(f"  静止画アセット: {len(self._image_asset_mgr.list_all())} 件")
-        print(f"  {PTT_KEY.upper()} を押しながら話しかけてください")
-        print("  F5=再生/停止トグル F6=停止 F7=最小化 F8=復元")
-        print("  Ctrl+C で終了")
+        print(f"  Articles: {len(self._today_titles)}  /  Videos: {len(self._content_list)}")
+        print(f"  Still-image assets: {len(self._image_asset_mgr.list_all())}")
+        print(f"  Language: {_LANG.bcp47_code} ({_LANG.prompt_lang})")
+        print(f"  Hold {PTT_KEY.upper()} and speak")
+        print("  F5=play/pause  F6=stop  F7=minimize  F8=restore")
+        print("  Ctrl+C to exit")
         print("═" * 55)
         if self._content_list:
-            print("\n【再生可能なコンテンツ一覧】")
+            print("\n[PLAYABLE CONTENT]")
             for v in self._content_list:
                 tags = ", ".join(v["topic_tags"]) if v["topic_tags"] else "-"
                 mt = v.get("media_type", "?")
@@ -686,17 +705,17 @@ class GeminiLiveClient:
                     f" (score={v['score']:.1f}, tags={tags})"
                 )
         else:
-            print("\n【再生可能なコンテンツ一覧】\n  （なし）")
+            print("\n[PLAYABLE CONTENT]\n  (none)")
 
         image_assets = self._image_asset_mgr.list_all()
         if image_assets:
-            print("\n【静止画アセット】")
+            print("\n[STILL-IMAGE ASSETS]")
             for a in image_assets:
                 tags = ", ".join(a.get("topic_tags", []))
                 print(f"  [{a['id']}] {a['title']} (tags={tags})")
         print()
 
-        # ── mic / speaker タスク（セッション跨ぎで生存） ──
+        # ── mic / speaker tasks (persist across sessions) ──
         mic_task = asyncio.create_task(self._task_ptt_mic())
         speaker_task = asyncio.create_task(self._task_play_audio())
 
@@ -704,19 +723,19 @@ class GeminiLiveClient:
 
         try:
             while self._running:
-                # ── セッション接続 ──
+                # ── Connect session ──
                 config = self._build_config()
                 handle_info = (
-                    f" (resumption handle あり)"
-                    if self._resumption_handle else " (新規セッション)"
+                    " (resumption handle present)"
+                    if self._resumption_handle else " (new session)"
                 )
                 logger.info(
-                    f"Gemini Live API に接続中... (model={MODEL}){handle_info}"
+                    f"Connecting to Gemini Live API... (model={MODEL}){handle_info}"
                 )
                 if consecutive_failures > 0:
                     print(
-                        f"🔄 再接続中... "
-                        f"(試行 {consecutive_failures}/{self._max_reconnect_attempts})"
+                        f"🔄 Reconnecting... "
+                        f"(attempt {consecutive_failures}/{self._max_reconnect_attempts})"
                     )
 
                 try:
@@ -726,18 +745,18 @@ class GeminiLiveClient:
                         self._session = session
                         self._reconnecting = False
                         self._session_lost.clear()
-                        consecutive_failures = 0  # 接続成功でリセット
+                        consecutive_failures = 0  # Reset on successful connection
 
                         if self._resumption_handle:
-                            print("✅ セッション再接続成功（会話コンテキスト復元）")
+                            print("✅ Session reconnected (conversation context restored)")
                         else:
-                            print("✅ セッション接続成功")
-                        print("─── (F9 で話しかけてください) ───\n")
+                            print("✅ Session connected")
+                        print(f"─── (Hold {PTT_KEY.upper()} to speak) ───\n")
 
-                        # receive タスクを起動し、切断を待つ
+                        # Launch receive task and wait for disconnect
                         recv_task = asyncio.create_task(self._task_receive())
                         try:
-                            # session_lost が set されるか、recv_task が終了するまで待つ
+                            # Wait until session_lost is set or recv_task finishes
                             await self._session_lost.wait()
                         finally:
                             recv_task.cancel()
@@ -748,31 +767,31 @@ class GeminiLiveClient:
 
                 except Exception as e:
                     logger.error(
-                        f"[Session] 接続/セッションエラー: {type(e).__name__}: {e}"
+                        f"[Session] Connection/session error: {type(e).__name__}: {e}"
                     )
 
                 if not self._running:
                     break
 
-                # ── 再接続バックオフ ──
+                # ── Reconnect backoff ──
                 consecutive_failures += 1
                 self._reconnecting = True
                 self._session = None
 
                 if consecutive_failures >= self._max_reconnect_attempts:
                     logger.error(
-                        f"[Session] 再接続 {self._max_reconnect_attempts} 回失敗。"
-                        f"終了します。"
+                        f"[Session] Reconnection failed {self._max_reconnect_attempts} time(s). "
+                        f"Exiting."
                     )
                     print(
-                        f"❌ 再接続に {self._max_reconnect_attempts} 回失敗しました。"
-                        f"終了します。"
+                        f"❌ Reconnection failed {self._max_reconnect_attempts} time(s). "
+                        f"Exiting."
                     )
                     break
 
                 delay = min(2 ** consecutive_failures, 30)
-                logger.info(f"[Session] {delay} 秒後に再接続します...")
-                print(f"⏳ {delay} 秒後に再接続します...")
+                logger.info(f"[Session] Reconnecting in {delay}s...")
+                print(f"⏳ Reconnecting in {delay}s...")
                 await asyncio.sleep(delay)
 
         except KeyboardInterrupt:
@@ -786,7 +805,7 @@ class GeminiLiveClient:
                     await t
                 except asyncio.CancelledError:
                     pass
-            logger.info("セッション終了")
+            logger.info("Session ended")
 
     def close(self):
         self._running = False
@@ -794,11 +813,11 @@ class GeminiLiveClient:
 
 
 # ══════════════════════════════════════════════════════════════════
-# エントリポイント
+# Entry point
 # ══════════════════════════════════════════════════════════════════
 
 async def _main():
-    # 静止画アセットのダウンロード
+    # Download still-image assets
     image_asset_mgr = ImageAssetManager()
     image_asset_mgr.ensure_downloaded()
 
@@ -807,37 +826,37 @@ async def _main():
 
     if not content_list:
         logger.warning(
-            "ContentIndex に再生可能なコンテンツがありません。"
-            "M1/M3 で動画を生成してから起動してください。"
+            "No playable content found in ContentIndex. "
+            "Generate videos with M1/M3 before launching."
         )
 
-    # MediaWindow 起動（別スレッド）
+    # Launch MediaWindow (separate thread)
     window = MediaWindow()
     window.start()
     register_hotkeys(window)
 
-    # ── Breaking News ティッカーサーバ起動 ──
+    # ── Start Breaking News ticker server ──
     ticker_state = TickerState()
     ticker_runner = await start_ticker_server(ticker_state)
     ticker_poll_task = asyncio.create_task(
         poll_article_store(ticker_state, _DB_PATH)
     )
     logger.info(
-        f"Breaking News ティッカー起動: http://127.0.0.1:{TICKER_PORT}/overlay"
+        f"Breaking News ticker started: http://127.0.0.1:{TICKER_PORT}/overlay"
     )
 
     client = GeminiLiveClient(window, content_list, today_titles, image_asset_mgr)
     try:
         await client.run()
     finally:
-        # ティッカー停止
+        # Stop ticker
         ticker_poll_task.cancel()
         try:
             await ticker_poll_task
         except asyncio.CancelledError:
             pass
         await ticker_runner.cleanup()
-        logger.info("Breaking News ティッカー停止")
+        logger.info("Breaking News ticker stopped")
 
         window.close()
         client.close()

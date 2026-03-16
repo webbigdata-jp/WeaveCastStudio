@@ -194,16 +194,6 @@ tail -f ~/WeaveCastStudio/logs/m1_cron.log
 
 ---
 
-## Step 12: What to Show for GCP Proof Recording
-
-1. **GCP Console** — Screen showing the GCE instance `weavecast-collector` is Running.
-2. **SSH Connection** — Screen showing the connection via `gcloud compute ssh`.
-3. **Process Verification** — Schedule verification via `crontab -l`.
-4. **Log Verification** — Screen showing crawling logs flowing via `tail logs/m3_cron.log`.
-5. **DB Verification** — Display record counts via `sqlite3 articles.db`.
-
----
-
 ## Troubleshooting
 
 ### DrissionPage cannot find Chromium

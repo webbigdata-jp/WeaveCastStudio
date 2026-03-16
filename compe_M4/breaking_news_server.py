@@ -1,21 +1,21 @@
 """
 compe_M4/breaking_news_server.py
 
-OBS ブラウザソース向けの Breaking News ティッカー配信サーバ。
+Breaking news ticker delivery server for OBS browser sources.
 
-【機能】
-  - ArticleStore を定期ポーリングし、今日のニュースと速報を取得
-  - SSE (Server-Sent Events) で OBS ブラウザソースにリアルタイム配信
-  - GET /overlay  → ティッカー表示用 HTML を返す
-  - GET /events   → SSE ストリーム（ティッカー更新・速報検知）
-  - POST /breaking → 手動での速報差し込み（将来拡張用）
+Features:
+  - Polls ArticleStore periodically to fetch today's news and breaking items
+  - Delivers real-time updates to OBS browser sources via SSE (Server-Sent Events)
+  - GET /overlay  -> Returns the ticker display HTML
+  - GET /events   -> SSE stream (ticker updates and breaking news detection)
+  - POST /breaking -> Manual breaking-news injection (reserved for future use)
 
-【OBS 設定】
-  ソース → ブラウザ を追加
+OBS setup:
+  Sources -> Add Browser source
   URL: http://localhost:8765/overlay
-  幅: 1920  高さ: 1080
+  Width: 1920  Height: 1080
 
-【依存】
+Dependencies:
   uv add aiohttp
 """
 
@@ -30,43 +30,43 @@ from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
-# ── 設定 ────────────────────────────────────────────────────────
+# ── Configuration ────────────────────────────────────────────────────────
 DEFAULT_PORT = 8765
-POLL_INTERVAL_SEC = 30          # ArticleStore ポーリング間隔
-TICKER_HEADLINE_MAX = 20        # ティッカーに表示する最大記事数
-MIN_IMPORTANCE = 3.0            # ティッカーに載せる最低 importance_score
+POLL_INTERVAL_SEC = 30          # ArticleStore polling interval
+TICKER_HEADLINE_MAX = 20        # Maximum number of articles shown in the ticker
+MIN_IMPORTANCE = 3.0            # Minimum importance_score to include in the ticker
 
-# overlay HTML のパス
+# Path to the overlay HTML
 _HERE = Path(__file__).resolve().parent
 OVERLAY_HTML_PATH = _HERE / "overlay" / "ticker.html"
 
 
 # ══════════════════════════════════════════════════════════════════
-# TickerState: ポーリング結果を保持する共有状態
+# TickerState: holds polling results as shared state
 # ══════════════════════════════════════════════════════════════════
 
 class TickerState:
     """
-    ArticleStore のポーリング結果を保持し、
-    SSE クライアントへの配信データを生成するクラス。
+    Holds ArticleStore polling results and generates data
+    for delivery to SSE clients.
     """
 
     def __init__(self):
-        self.headlines: list[dict] = []       # 通常ニュース一覧
-        self.breaking: list[dict] = []        # 速報一覧
-        self._last_breaking_ids: set = set()  # 前回ポーリング時の速報 ID
-        self._version: int = 0                # 更新カウンタ
-        self._event = asyncio.Event()         # 更新通知用
+        self.headlines: list[dict] = []       # Regular news list
+        self.breaking: list[dict] = []        # Breaking news list
+        self._last_breaking_ids: set = set()  # Breaking news IDs from the previous poll
+        self._version: int = 0                # Update counter
+        self._event = asyncio.Event()         # Update notification event
 
     def update(self, headlines: list[dict], breaking: list[dict]) -> bool:
         """
-        ポーリング結果を反映する。変更があれば True を返す。
+        Apply polling results. Returns True if anything changed.
 
         Args:
-            headlines: get_today_titles() の結果
-            breaking: get_breaking() の結果
+            headlines: result of get_today_titles()
+            breaking:  result of get_breaking()
         Returns:
-            bool: 内容に変更があった場合 True
+            bool: True if the content has changed
         """
         new_breaking_ids = {a["id"] for a in breaking}
         headlines_changed = self._headlines_changed(headlines)
@@ -84,13 +84,13 @@ class TickerState:
 
         if breaking_changed and breaking:
             logger.info(
-                f"[Ticker] 🚨 速報検知: {len(breaking)} 件 "
+                f"[Ticker] Breaking news detected: {len(breaking)} item(s) "
                 f"(IDs: {new_breaking_ids})"
             )
         return True
 
     def inject_manual_breaking(self, headline: str, source: str = "MANUAL") -> None:
-        """手動速報を差し込む（POST /breaking 用）。"""
+        """Inject a manual breaking news item (used by POST /breaking)."""
         entry = {
             "id": f"manual_{int(time.time())}",
             "title": headline,
@@ -102,10 +102,10 @@ class TickerState:
         self._version += 1
         self._event.set()
         self._event.clear()
-        logger.info(f"[Ticker] 手動速報差し込み: {headline}")
+        logger.info(f"[Ticker] Manual breaking news injected: {headline}")
 
     def to_sse_data(self) -> dict:
-        """SSE 配信用の JSON データを生成する。"""
+        """Generate JSON data for SSE delivery."""
         return {
             "version": self._version,
             "has_breaking": len(self.breaking) > 0,
@@ -116,7 +116,7 @@ class TickerState:
                     "source": a.get("source_name", ""),
                     "score": a.get("importance_score", 0),
                 }
-                for a in self.breaking[:5]  # 速報は最大5件
+                for a in self.breaking[:5]  # Maximum 5 breaking items
             ],
             "headlines": [
                 {
@@ -135,7 +135,7 @@ class TickerState:
         return self._version
 
     async def wait_for_update(self, timeout: float = 30.0) -> bool:
-        """更新が来るか timeout まで待つ。更新があれば True。"""
+        """Wait up to timeout for an update. Returns True if an update arrived."""
         try:
             await asyncio.wait_for(self._event.wait(), timeout=timeout)
             return True
@@ -143,7 +143,7 @@ class TickerState:
             return False
 
     def _headlines_changed(self, new_headlines: list[dict]) -> bool:
-        """ヘッドラインリストに変更があったか簡易チェック。"""
+        """Quick check for changes in the headline list."""
         if len(new_headlines) != len(self.headlines):
             return True
         for new, old in zip(new_headlines, self.headlines):
@@ -155,7 +155,7 @@ class TickerState:
 
 
 # ══════════════════════════════════════════════════════════════════
-# ArticleStore ポーリングタスク
+# ArticleStore polling task
 # ══════════════════════════════════════════════════════════════════
 
 async def poll_article_store(
@@ -164,18 +164,18 @@ async def poll_article_store(
     interval: float = POLL_INTERVAL_SEC,
 ):
     """
-    ArticleStore を定期ポーリングし、TickerState を更新する。
+    Poll ArticleStore periodically and update TickerState.
 
     Args:
-        state: 共有 TickerState
-        db_path: ArticleStore の DB パス
-        interval: ポーリング間隔（秒）
+        state:    shared TickerState
+        db_path:  path to the ArticleStore database
+        interval: polling interval in seconds
     """
-    # import は遅延（起動時に sys.path が設定済みである前提）
+    # Deferred import (assumes sys.path is configured at startup)
     from store.article_store import ArticleStore
 
     logger.info(
-        f"[Ticker] ArticleStore ポーリング開始 "
+        f"[Ticker] ArticleStore polling started "
         f"(interval={interval}s, db={db_path})"
     )
 
@@ -187,21 +187,21 @@ async def poll_article_store(
             changed = state.update(headlines, breaking)
             if changed:
                 logger.debug(
-                    f"[Ticker] 更新: headlines={len(headlines)}, "
+                    f"[Ticker] Updated: headlines={len(headlines)}, "
                     f"breaking={len(breaking)}"
                 )
         except Exception as e:
-            logger.error(f"[Ticker] ポーリングエラー: {e}", exc_info=True)
+            logger.error(f"[Ticker] Polling error: {e}", exc_info=True)
 
         await asyncio.sleep(interval)
 
 
 # ══════════════════════════════════════════════════════════════════
-# HTTP ハンドラ
+# HTTP handlers
 # ══════════════════════════════════════════════════════════════════
 
 async def handle_overlay(request: web.Request) -> web.Response:
-    """GET /overlay — ティッカー HTML を返す。"""
+    """GET /overlay — Return the ticker HTML."""
     html_path = request.app["overlay_html_path"]
     if not html_path.exists():
         return web.Response(
@@ -214,9 +214,9 @@ async def handle_overlay(request: web.Request) -> web.Response:
 
 async def handle_events(request: web.Request) -> web.StreamResponse:
     """
-    GET /events — SSE ストリーム。
-    TickerState が更新されるたびにイベントを送信する。
-    接続維持のため、更新がなくても30秒ごとに heartbeat を送る。
+    GET /events — SSE stream.
+    Sends an event whenever TickerState is updated.
+    Sends a heartbeat every 30 seconds to keep the connection alive.
     """
     state: TickerState = request.app["ticker_state"]
 
@@ -227,9 +227,9 @@ async def handle_events(request: web.Request) -> web.StreamResponse:
     response.headers["Access-Control-Allow-Origin"] = "*"
     await response.prepare(request)
 
-    logger.info("[SSE] クライアント接続")
+    logger.info("[SSE] Client connected")
 
-    # 初回データ送信
+    # Send initial data
     data = json.dumps(state.to_sse_data(), ensure_ascii=False)
     await response.write(f"event: ticker\ndata: {data}\n\n".encode("utf-8"))
 
@@ -245,22 +245,22 @@ async def handle_events(request: web.Request) -> web.StreamResponse:
                 )
                 last_version = state.version
             else:
-                # heartbeat
+                # Heartbeat
                 await response.write(b": heartbeat\n\n")
     except (ConnectionResetError, ConnectionAbortedError):
-        logger.info("[SSE] クライアント切断")
+        logger.info("[SSE] Client disconnected")
     except asyncio.CancelledError:
-        logger.info("[SSE] SSE タスクキャンセル")
+        logger.info("[SSE] SSE task cancelled")
 
     return response
 
 
 async def handle_post_breaking(request: web.Request) -> web.Response:
     """
-    POST /breaking — 手動速報差し込み。
+    POST /breaking — Inject a manual breaking news item.
 
-    Body JSON:
-        {"headline": "速報テキスト", "source": "MANUAL"}
+    Request body (JSON):
+        {"headline": "Breaking news text", "source": "MANUAL"}
     """
     state: TickerState = request.app["ticker_state"]
     try:
@@ -279,13 +279,13 @@ async def handle_post_breaking(request: web.Request) -> web.Response:
 
 
 async def handle_status(request: web.Request) -> web.Response:
-    """GET /status — 現在のティッカー状態を返す（デバッグ用）。"""
+    """GET /status — Return the current ticker state (for debugging)."""
     state: TickerState = request.app["ticker_state"]
     return web.json_response(state.to_sse_data())
 
 
 # ══════════════════════════════════════════════════════════════════
-# サーバ起動
+# Server startup
 # ══════════════════════════════════════════════════════════════════
 
 def create_app(
@@ -293,11 +293,11 @@ def create_app(
     overlay_html_path: Optional[Path] = None,
 ) -> web.Application:
     """
-    aiohttp Application を生成する。
+    Create the aiohttp Application.
 
     Args:
-        ticker_state: 共有 TickerState
-        overlay_html_path: ticker.html のパス（None でデフォルト）
+        ticker_state:      shared TickerState
+        overlay_html_path: path to ticker.html (uses default if None)
     Returns:
         web.Application
     """
@@ -320,28 +320,28 @@ async def start_server(
     overlay_html_path: Optional[Path] = None,
 ) -> web.AppRunner:
     """
-    サーバを非ブロッキングで起動する。
-    gemini_live_client.py から呼び出す用。
+    Start the server in non-blocking mode.
+    Called from gemini_live_client.py.
 
     Args:
-        ticker_state: 共有 TickerState
-        host: バインドアドレス
-        port: ポート番号
-        overlay_html_path: ticker.html のパス
+        ticker_state:      shared TickerState
+        host:              bind address
+        port:              port number
+        overlay_html_path: path to ticker.html
     Returns:
-        web.AppRunner（停止時に cleanup() を呼ぶ）
+        web.AppRunner (call cleanup() to stop)
     """
     app = create_app(ticker_state, overlay_html_path)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()
-    logger.info(f"[Ticker] HTTP サーバ起動: http://{host}:{port}/overlay")
+    logger.info(f"[Ticker] HTTP server started: http://{host}:{port}/overlay")
     return runner
 
 
 # ══════════════════════════════════════════════════════════════════
-# スタンドアロン起動（テスト用）
+# Standalone entry point (for testing)
 # ══════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
@@ -352,15 +352,15 @@ if __name__ == "__main__":
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # コマンドライン引数で DB パスを受け取る
+    # Accept DB path as a command-line argument
     if len(sys.argv) >= 2:
         db_path = sys.argv[1]
     else:
-        # デフォルト: compe_M3/data/articles.db
+        # Default: compe_M3/data/articles.db
         _PROJECT_ROOT = Path(__file__).resolve().parent.parent
         db_path = str(_PROJECT_ROOT / "compe_M3" / "data" / "articles.db")
 
-    print(f"DB: {db_path}")
+    print(f"DB:      {db_path}")
     print(f"Overlay: http://127.0.0.1:{DEFAULT_PORT}/overlay")
     print(f"SSE:     http://127.0.0.1:{DEFAULT_PORT}/events")
     print(f"Status:  http://127.0.0.1:{DEFAULT_PORT}/status")
@@ -373,7 +373,7 @@ if __name__ == "__main__":
             poll_article_store(state, db_path)
         )
         try:
-            # 永続実行
+            # Run indefinitely
             await asyncio.Event().wait()
         finally:
             poll_task.cancel()

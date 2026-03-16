@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=1920, height=1080">
 <title>WeaveCastStudio Ticker</title>
 <style>
-  /* ── リセット・全体 ── */
+  /* ── Reset / global ── */
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
     width: 1920px;
@@ -15,7 +15,7 @@
     font-family: 'Noto Sans JP', 'Yu Gothic UI', 'Segoe UI', sans-serif;
   }
 
-  /* ── ティッカーバー（画面下部）── 常に同じ見た目 ── */
+  /* ── Ticker bar (bottom of screen) ── always the same appearance ── */
   #ticker-bar {
     position: absolute;
     bottom: 0;
@@ -36,7 +36,7 @@
     transform: translateY(0);
   }
 
-  /* ── NEWS ラベル（左端） ── */
+  /* ── NEWS label (left edge) ── */
   #now-label {
     display: flex;
     align-items: center;
@@ -52,7 +52,7 @@
     z-index: 10;
   }
 
-  /* ── スクロール領域 ── */
+  /* ── Scroll area ── */
   #scroll-area {
     flex: 1;
     height: 100%;
@@ -70,7 +70,7 @@
     will-change: transform;
   }
 
-  /* ── 通常ヘッドラインアイテム ── */
+  /* ── Regular headline item ── */
   .headline-item {
     display: inline-flex;
     align-items: center;
@@ -93,7 +93,7 @@
     margin-left: 12px;
   }
 
-  /* ── 速報アイテム：赤背景 + 黄色文字で目立たせる ── */
+  /* ── Breaking item: red background + yellow text for emphasis ── */
   .headline-item.breaking-item {
     background: rgba(200, 10, 10, 0.90);
     border-radius: 4px;
@@ -121,7 +121,7 @@
     color: #fbbf24;
   }
 
-  /* ── 速報バナー（上部に初回のみ一時表示） ── */
+  /* ── Breaking banner (shown once at the top on first detection) ── */
   #breaking-banner {
     position: absolute;
     top: 60px;
@@ -157,7 +157,7 @@
     opacity: 1;
   }
 
-  /* ── 速報フラッシュ（初回のみの軽い全画面フラッシュ） ── */
+  /* ── Breaking flash (light full-screen flash on first detection only) ── */
   #breaking-flash {
     position: absolute;
     top: 0; left: 0;
@@ -179,16 +179,16 @@
 </head>
 <body>
 
-<!-- 速報時の画面フラッシュ（初回のみ） -->
+<!-- Full-screen flash on breaking news (first occurrence only) -->
 <div id="breaking-flash"></div>
 
-<!-- 速報バナー（上部に初回のみ一時表示） -->
+<!-- Breaking news banner (shown once at the top on first detection) -->
 <div id="breaking-banner">
   <span class="banner-label">🔴 BREAKING</span>
   <span id="banner-text"></span>
 </div>
 
-<!-- ティッカーバー（常に同じ外観） -->
+<!-- Ticker bar (always the same appearance) -->
 <div id="ticker-bar">
   <div id="now-label">NEWS</div>
   <div id="scroll-area">
@@ -198,10 +198,10 @@
 
 <script>
 (function() {
-  // ── 設定 ──
+  // ── Configuration ──
   const SSE_URL = `http://${location.host}/events`;
   const SCROLL_SPEED = 120;              // px/sec
-  const BREAKING_BANNER_DURATION = 8000; // バナー表示時間(ms)
+  const BREAKING_BANNER_DURATION = 8000; // Banner display duration (ms)
   const RECONNECT_DELAY = 3000;
 
   // ── DOM ──
@@ -212,28 +212,28 @@
   const breakingBanner = document.getElementById('breaking-banner');
   const bannerText     = document.getElementById('banner-text');
 
-  // ── 状態 ──
+  // ── State ──
   let currentData = null;
   let animationId = null;
   let bannerTimer = null;
 
-  // 速報IDの既読管理 — バナー/フラッシュは初回のみ発動
+  // Track seen breaking IDs — banner/flash fires only on first occurrence
   const shownBreakingIds = new Set();
 
-  // ── ティッカーバーを表示 ──
+  // ── Show ticker bar ──
   function showTicker() {
     tickerBar.classList.add('visible');
   }
 
-  // ── ヘッドラインDOM生成 ──
-  // 速報アイテムは通常ニュースに混ざって表示される（赤背景で強調）
+  // ── Build headline DOM ──
+  // Breaking items are mixed into the regular scroll with red background emphasis
   function buildHeadlines(data) {
     scrollTrack.innerHTML = '';
 
     const items = data.headlines || [];
     if (items.length === 0) return;
 
-    // 2周分のアイテムを生成（ループ用）
+    // Generate two copies for seamless looping
     for (let repeat = 0; repeat < 2; repeat++) {
       items.forEach((item, i) => {
         const el = document.createElement('span');
@@ -243,17 +243,17 @@
         if (isBreaking) el.classList.add('breaking-item');
 
         let html = '';
-        // セパレータ（先頭以外）
+        // Separator (skip for first item of first repeat)
         if (i > 0 || repeat > 0) {
           html += '<span class="sep">◆</span>';
         }
-        // 速報タグ
+        // Breaking tag
         if (isBreaking) {
           html += '<span class="breaking-tag">BREAKING</span>';
         }
-        // タイトル
+        // Title
         html += escapeHtml(item.title || '');
-        // ソース
+        // Source
         if (item.source) {
           html += `<span class="source">${escapeHtml(item.source)}</span>`;
         }
@@ -263,7 +263,7 @@
     }
   }
 
-  // ── スクロールアニメーション ──
+  // ── Scroll animation ──
   let scrollPos = 0;
 
   function startScroll() {
@@ -279,7 +279,7 @@
 
       scrollPos -= SCROLL_SPEED * dt;
 
-      // 全体の半分をスクロールし終えたらリセット（ループ）
+      // Reset when the first half has scrolled out (seamless loop)
       const halfWidth = scrollTrack.scrollWidth / 2;
       if (halfWidth > 0 && scrollPos < -halfWidth) {
         scrollPos += halfWidth;
@@ -292,26 +292,26 @@
     animationId = requestAnimationFrame(tick);
   }
 
-  // ── 速報の初回演出（バナー＋フラッシュ） ──
+  // ── First-time breaking news effect (banner + flash) ──
   function handleBreakingFirstTime(breakingItems) {
     if (!breakingItems || breakingItems.length === 0) return;
 
-    // まだバナーを出していない速報を探す
+    // Find breaking items whose banner has not been shown yet
     const unseenBreaking = breakingItems.filter(b => !shownBreakingIds.has(b.id));
     if (unseenBreaking.length === 0) return;
 
-    // 既読に記録
+    // Mark as seen
     unseenBreaking.forEach(b => shownBreakingIds.add(b.id));
 
-    // 最も重要な未表示速報でバナーを出す
+    // Show banner for the most important unseen breaking item
     const top = unseenBreaking[0];
 
-    // フラッシュ
+    // Flash
     breakingFlash.classList.remove('active');
     void breakingFlash.offsetWidth;  // reflow
     breakingFlash.classList.add('active');
 
-    // バナー表示
+    // Show banner
     bannerText.textContent = top.title || '';
     breakingBanner.classList.add('show');
 
@@ -321,22 +321,22 @@
     }, BREAKING_BANNER_DURATION);
   }
 
-  // ── データ更新ハンドラ ──
+  // ── Data update handler ──
   function handleUpdate(data) {
     currentData = data;
 
-    // 速報があれば初回のみバナー演出
+    // Show banner effect on first occurrence of breaking news
     if (data.has_breaking && data.breaking && data.breaking.length > 0) {
       handleBreakingFirstTime(data.breaking);
     }
 
-    // ヘッドライン再構築（速報は通常ニュースに混ざる）
+    // Rebuild headlines (breaking items are mixed in with regular news)
     buildHeadlines(data);
     showTicker();
     startScroll();
   }
 
-  // ── SSE 接続 ──
+  // ── SSE connection ──
   function connectSSE() {
     const es = new EventSource(SSE_URL);
 
@@ -357,14 +357,14 @@
     };
   }
 
-  // ── ユーティリティ ──
+  // ── Utility ──
   function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
   }
 
-  // ── 起動 ──
+  // ── Start ──
   connectSSE();
 
 })();

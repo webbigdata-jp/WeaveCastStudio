@@ -194,16 +194,6 @@ tail -f ~/WeaveCastStudio/logs/m1_cron.log
 
 ---
 
-## Step 12: GCP Proof Recording で見せるもの
-
-1. **GCPコンソール** — GCEインスタンス `weavecast-collector` が Running の画面
-2. **SSH接続** — `gcloud compute ssh` で接続した画面
-3. **プロセス確認** — `crontab -l` でスケジュール確認
-4. **ログ確認** — `tail logs/m3_cron.log` で巡回ログが流れている画面
-5. **DB確認** — `sqlite3 articles.db` でレコード数を表示
-
----
-
 ## トラブルシューティング
 
 ### DrissionPage が Chromium を見つけられない
